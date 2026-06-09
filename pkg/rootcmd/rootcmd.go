@@ -65,6 +65,8 @@ func SetupAndExecutePluginRootCmd(root *cobra.Command, reg *registry.Registry, m
 		},
 	})
 
+	pluginMsg := fmt.Sprintf("harness-%s is a plugin for the Harness CLI — it is not meant to be run directly.\nUse: harness <verb> <noun> [flags]\n\nTo explore %s commands:\n  harness get module %s\n", moduleName, moduleName, moduleName)
+
 	origRun := root.RunE
 	root.RunE = func(cmd *cobra.Command, args []string) error {
 		if ok, _ := cmd.Flags().GetBool("spec"); ok {
@@ -76,9 +78,17 @@ func SetupAndExecutePluginRootCmd(root *cobra.Command, reg *registry.Registry, m
 		if origRun != nil {
 			return origRun(cmd, args)
 		}
-		fmt.Printf("%s\nVersion %s\n", root.Short, hbase.Version)
+		fmt.Print(pluginMsg)
 		return nil
 	}
+	defaultHelp := root.HelpFunc()
+	root.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		if !cmd.HasParent() {
+			fmt.Print(pluginMsg)
+			return
+		}
+		defaultHelp(cmd, args)
+	})
 	SetupAndExecuteRootCmd(root, reg)
 }
 
