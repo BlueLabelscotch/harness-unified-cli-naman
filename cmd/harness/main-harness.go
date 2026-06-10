@@ -12,8 +12,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/harness/harness-cli/pkg/console"
+	"github.com/harness/harness-cli/modules/aievals"
 	"github.com/harness/harness-cli/modules/core"
 	"github.com/harness/harness-cli/modules/iacm"
+	"github.com/harness/harness-cli/modules/kg"
 	"github.com/harness/harness-cli/modules/pipeline"
 	"github.com/harness/harness-cli/modules/platform"
 	"github.com/harness/harness-cli/pkg/registry"
@@ -37,6 +39,8 @@ func main() {
 	platform.ModuleInit(reg.Module("platform"))
 	// har is an external module (external_binary: harness-har) — ModuleInit is not loaded here.
 	iacm.ModuleInit(reg.Module("iacm"))
+	kg.ModuleInit(reg.Module("kg"))
+	aievals.ModuleInit(reg.Module("aievals"))
 	rootcmd.MaybeCheckSpecs(reg)
 
 	root := &cobra.Command{

@@ -112,7 +112,11 @@ An empty `body_params` still sends `{}` (required by gRPC-gateway for POST/PATCH
 1. Create `pkg/spec/<module>.spec.yaml`.
 2. It is automatically embedded via `//go:embed *.spec.yaml` in `spec.go`.
 3. Set `module_type: builtin` and `module_desc: ...`.
-4. Run `task build && cp $(go env GOPATH)/bin/harness ~/.local/bin/harness` to test.
+4. Add `noun_aliases` (at minimum the plural form) to every noun in the spec.
+5. Create `modules/<module>/<module>.help.txt` — see `modules/platform/platform.help.txt` for the format. Include a domain-model section and a `{{nouns}}` placeholder.
+6. Create `modules/<module>/<module>.go` — embed the help.txt and call `reg.SetHelpText(helpText)` in `ModuleInit`. See `modules/kg/kg.go` for the minimal pattern.
+7. Wire it into `cmd/harness/main-harness.go`: add the import and call `<module>.ModuleInit(reg.Module("<module>"))`.
+8. Run `task build && cp $(go env GOPATH)/bin/harness ~/.local/bin/harness` to test.
 
 ## Testing commands
 
