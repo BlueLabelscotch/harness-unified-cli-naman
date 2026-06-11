@@ -128,6 +128,11 @@ func dumpModuleHelp(moduleName string, reg *registry.Registry) error {
 
 // SetupAndExecuteRootCmd wires common flags, attaches commands, and executes root.
 func SetupAndExecuteRootCmd(root *cobra.Command, reg *registry.Registry) {
+	bt := hbase.BuildTime
+	if bt == "" {
+		bt = "dev"
+	}
+	root.Version = fmt.Sprintf("%s (%s)", hbase.Version, bt)
 	if os.Getenv(hbase.EnvDebugCompletion) == "1" && isCompletionInvocation() {
 		hlog.SetDebugFile(hbase.CompletionDebugLogFile)
 	}

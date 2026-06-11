@@ -68,6 +68,8 @@ nouns:
         expr: it.executionTriggerInfo.triggerType
       - id: triggered_by
         expr: it.executionTriggerInfo.triggeredBy.extraInfo.email
+      - id: error
+        expr: it.failureInfo.message
       - id: url
         expr: url(it)
 
