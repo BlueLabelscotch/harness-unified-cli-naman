@@ -46,6 +46,14 @@ tasks:
       - |
         echo "harness-har size: $(du -sh ../../bin/harness-har | cut -f1)"
 
+  install:
+    desc: Build and install harness binary to ~/.local/bin
+    deps: [build:main]
+    cmds:
+      - mkdir -p ~/.local/bin
+      - cp bin/{{.BINARY}} ~/.local/bin/{{.BINARY}}
+      - echo "Installed ~/.local/bin/{{.BINARY}}"
+
   dev:
     desc: Run without ldflags (version shows 0.1.0-dev / dev)
     cmds:
