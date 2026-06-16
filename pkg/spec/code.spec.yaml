@@ -70,7 +70,7 @@ nouns:
   - noun: pr
     short_desc: A Harness Code pull request.
     noun_aliases: [prs, pull_request, pull_requests]
-    url_path: /ng/account/{{auth.account}}/module/code/orgs/{{auth.org}}/projects/{{auth.project}}/repos/{{it.source_repo_url}}/pulls/{{it.number}}
+    url_path: /ng/account/{{auth.account}}/all/code/orgs/{{auth.org}}/projects/{{auth.project}}/repos/{{ctx.idParts[0]}}/pulls/{{it.number}}/conversation
     fields:
       - id: number
         label: "#"
@@ -78,16 +78,35 @@ nouns:
         align: right
       - id: title
         expr: it.title
+      - id: description
+        expr: it.description
       - id: state
         expr: it.state
+      - id: is_draft
+        label: Draft
+        expr: it.is_draft
       - id: source_branch
-        label: Source
+        label: Source Branch
         expr: it.source_branch
       - id: target_branch
-        label: Target
+        label: Target Branch
         expr: it.target_branch
       - id: author
         expr: it.author.display_name
+      - id: author_email
+        label: Author Email
+        expr: it.author.email
+      - id: author_uid
+        label: Author UID
+        expr: it.author.uid
+      - id: merger
+        expr: it.merger.display_name
+      - id: merger_email
+        label: Merger Email
+        expr: it.merger.email
+      - id: merger_uid
+        label: Merger UID
+        expr: it.merger.uid
       - id: reviewers
         expr: it.stats.reviews.required_count
         label: Reqd Reviews
@@ -97,8 +116,42 @@ nouns:
         align: right
       - id: merge_strategy
         expr: it.merge_method
+      - id: merge_check_status
+        label: Merge Check
+        expr: it.merge_check_status
+      - id: rebase_check_status
+        label: Rebase Check
+        expr: it.rebase_check_status
+      - id: commits
+        expr: it.stats.commits
+        align: right
+      - id: conversations
+        expr: it.stats.conversations
+        align: right
+      - id: unresolved_count
+        label: Unresolved
+        expr: it.stats.unresolved_count
+        align: right
+      - id: files_changed
+        label: Files Changed
+        expr: it.stats.files_changed
+        align: right
+      - id: additions
+        expr: it.stats.additions
+        align: right
+      - id: deletions
+        expr: it.stats.deletions
+        align: right
+      - id: source_sha
+        label: Source SHA
+        expr: it.source_sha
+      - id: merge_base_sha
+        label: Merge Base SHA
+        expr: it.merge_base_sha
       - id: created
         expr: epochMs(it.created)
+      - id: edited
+        expr: epochMs(it.edited)
       - id: updated
         expr: epochMs(it.updated)
       - id: merged
@@ -132,12 +185,21 @@ nouns:
       - id: message
         expr: it.message
         width_max: 60
+      - id: title
+        expr: it.title
+        width_max: 60
       - id: author
         expr: it.author.identity.name
       - id: author_email
         expr: it.author.identity.email
       - id: authored
         expr: epochMs(it.author.when)
+      - id: committer
+        expr: it.committer.identity.name
+      - id: committer_email
+        expr: it.committer.identity.email
+      - id: committed
+        expr: epochMs(it.committer.when)
 
   - noun: tag
     short_desc: A git tag in a Harness Code repository.
@@ -335,6 +397,7 @@ commands:
     endpoint:
       path: /code/api/v1/repos/{{ctx.idParts[0]}}/pullreq/{{ctx.idParts[1]}}
       item_expr: it
+      text_footer: "{{url(it)}}\n"
 
   - command: create pr
     verb: create
@@ -522,7 +585,7 @@ commands:
         page_size_param: limit
         page_size_default: 20
         page_size_max: 100
-      columns: [sha, message, author, authored]
+      columns: [sha, title, author, authored]
 
   - command: get commit
     verb: get
