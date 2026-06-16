@@ -92,6 +92,8 @@ func Make(ctx *cmdctx.Ctx) map[string]any {
 		"jsonArray":             exprfuncs.JsonArray,
 		"formatRoleAssignments": exprfuncs.FormatRoleAssignments,
 		"formatRoleIds":         exprfuncs.FormatRoleIds,
+		"truncate":              exprfuncs.Truncate,
+		"formatOrder":           exprfuncs.FormatOrder,
 	}
 	if ctx.Resolver != nil {
 		noun := ctx.Noun

@@ -138,6 +138,29 @@ func LastPart(s string) string {
 	return s
 }
 
+// FormatOrder formats an activity order/sub_order pair as "N" or "N.M".
+// sub_order of 0 is omitted. Accepts any numeric type (JSON numbers arrive as float64).
+func FormatOrder(order, subOrder any) string {
+	o := toInt64(order)
+	s := toInt64(subOrder)
+	if s == 0 {
+		return fmt.Sprintf("%d", o)
+	}
+	return fmt.Sprintf("%d.%d", o, s)
+}
+
+// Truncate collapses all whitespace (newlines, tabs, runs of spaces) in s to
+// single spaces, trims leading/trailing space, then truncates to n runes,
+// appending "…" if the string was shortened.
+func Truncate(s string, n int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+	return string(runes[:n]) + "…"
+}
+
 // EpochMs formats an epoch-millisecond timestamp as "2006-01-02 15:04:05" UTC.
 // Accepts any numeric type. Returns "" for zero or unrecognized input.
 func EpochMs(v any) string {
