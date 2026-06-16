@@ -165,6 +165,8 @@ nouns:
         expr: it.name
       - id: sha
         expr: it.sha
+      - id: sha8
+        expr: substr(it.sha, 0, 8)
       - id: is_default
         label: Default
         expr: it.is_default
@@ -282,12 +284,12 @@ commands:
         limit: flags.limit
       paging:
         paging_strategy: page_header
-        countable: true
-        total_header: x-total
+        countable: false
         page_index_param: page
         page_size_param: limit
         page_size_default: 30
         page_size_max: 100
+        page_base: 1
       completion:
         id_expr: it.identifier
         name_expr: it.identifier
@@ -350,7 +352,7 @@ commands:
   - command: list pr
     verb: list
     noun: pr
-    short: "List pull requests for a repository: harness list pr <repo_id>"
+    short: "List pull requests for a repository: harness list pr <repo_id> [--state open|closed|merged|all]"
     handler_type: endpoint
     requires_parentid: true
     parentid_label: "<repo_id>"
@@ -358,7 +360,7 @@ commands:
     flags:
       - name: state
         description: "Filter by state: open, closed, merged, all"
-        default: open
+        default: all
         completion_values: [open, closed, merged, all]
       - name: search
         description: Filter by keyword
@@ -378,6 +380,7 @@ commands:
         page_size_param: limit
         page_size_default: 30
         page_size_max: 100
+        page_base: 1
       completion:
         id_expr: string(it.number)
         name_expr: '"#" + string(it.number) + " " + it.title'
@@ -510,7 +513,8 @@ commands:
         page_size_param: limit
         page_size_default: 30
         page_size_max: 100
-      columns: [name, sha, is_default, author, updated]
+        page_base: 1
+      columns: [name, sha8, is_default, author, updated]
 
   - command: get branch
     verb: get
@@ -585,6 +589,7 @@ commands:
         page_size_param: limit
         page_size_default: 20
         page_size_max: 100
+        page_base: 1
       columns: [sha, title, author, authored]
 
   - command: get commit
@@ -628,6 +633,7 @@ commands:
         page_size_param: limit
         page_size_default: 30
         page_size_max: 100
+        page_base: 1
       columns: [name, sha, message]
 
   - command: create tag

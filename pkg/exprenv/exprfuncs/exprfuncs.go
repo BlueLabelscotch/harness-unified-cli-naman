@@ -149,6 +149,27 @@ func FormatOrder(order, subOrder any) string {
 	return fmt.Sprintf("%d.%d", o, s)
 }
 
+// Substr returns a substring of s starting at rune index start, up to length n runes.
+// Negative start counts from the end. If start or end is out of bounds it is clamped.
+func Substr(s string, start, n int) string {
+	runes := []rune(s)
+	l := len(runes)
+	if start < 0 {
+		start = l + start
+	}
+	if start < 0 {
+		start = 0
+	}
+	if start >= l {
+		return ""
+	}
+	end := start + n
+	if end > l {
+		end = l
+	}
+	return string(runes[start:end])
+}
+
 // Truncate collapses all whitespace (newlines, tabs, runs of spaces) in s to
 // single spaces, trims leading/trailing space, then truncates to n runes,
 // appending "…" if the string was shortened.
