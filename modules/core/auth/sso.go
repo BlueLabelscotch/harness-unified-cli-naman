@@ -4,10 +4,12 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"net"
 	"net/http"
 	"net/url"
@@ -15,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/harness/harness-cli/modules/core/auth/assets"
 	"github.com/harness/harness-cli/pkg/auth"
 	"github.com/harness/harness-cli/pkg/cmdctx"
 	"github.com/harness/harness-cli/pkg/console"
@@ -119,14 +122,10 @@ func LoginSSOHandler(ctx *cmdctx.Ctx) error {
 	return nil
 }
 
-// resolveAPIURL determines the Harness API base URL from the JWT subdomain claim.
-// Per-cluster JWT support is not yet available; this URL is stored in the profile
-// for when it becomes available.
+// resolveAPIURL returns the MCP gateway URL for SSO-authenticated requests.
+// All SSO traffic is routed through mcp.harness.io regardless of the per-cluster
+// subdomain in the JWT; the gateway handles cluster routing internally.
 func resolveAPIURL(token, accountID, subdomain string) (string, error) {
-	if subdomain != "" {
-		hlog.Debug("resolveAPIURL", "subdomain", subdomain)
-		return "https://" + subdomain, nil
-	}
 	return mcpBaseURL, nil
 }
 
@@ -190,6 +189,17 @@ func waitForCallback(ln net.Listener, expectedState string) (string, error) {
 	codeCh := make(chan string, 1)
 	errCh := make(chan error, 1)
 
+	callbackTmpl := template.Must(template.New("callback").Parse(assets.CallbackHTML))
+	renderPage := func(w http.ResponseWriter, data callbackPageData) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		var buf bytes.Buffer
+		if err := callbackTmpl.Execute(&buf, data); err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		w.Write(buf.Bytes()) //nolint:errcheck
+	}
+
 	srv := &http.Server{ReadHeaderTimeout: 10 * time.Second}
 	srv.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != ssoCallbackPath {
@@ -199,7 +209,13 @@ func waitForCallback(ln net.Listener, expectedState string) (string, error) {
 		q := r.URL.Query()
 		if errParam := q.Get("error"); errParam != "" {
 			desc := q.Get("error_description")
-			fmt.Fprintf(w, "<html><body><h2>Login failed: %s</h2><p>%s</p><p>You may close this tab.</p></body></html>", errParam, desc)
+			renderPage(w, callbackPageData{
+				Title:        "Login failed",
+				LogoSVG:      template.HTML(assets.LogoSVG),
+				Success:      false,
+				ErrorMessage: "Authorization was denied or an error occurred.",
+				ErrorDetail:  errParam + ": " + desc,
+			})
 			errCh <- fmt.Errorf("authorization error: %s — %s", errParam, desc)
 			return
 		}
@@ -214,7 +230,11 @@ func waitForCallback(ln net.Listener, expectedState string) (string, error) {
 			errCh <- fmt.Errorf("no authorization code in callback")
 			return
 		}
-		fmt.Fprintf(w, "<html><body><h2>Login successful!</h2><p>You may close this tab and return to your terminal.</p></body></html>")
+		renderPage(w, callbackPageData{
+			Title:   "Login successful",
+			LogoSVG: template.HTML(assets.LogoSVG),
+			Success: true,
+		})
 		codeCh <- code
 	})
 
@@ -244,6 +264,14 @@ func waitForCallback(ln net.Listener, expectedState string) (string, error) {
 		shutdown()
 		return "", fmt.Errorf("timed out waiting for browser login (%.0f min)", ssoCallbackTimeout.Minutes())
 	}
+}
+
+type callbackPageData struct {
+	Title        string
+	LogoSVG      template.HTML
+	Success      bool
+	ErrorMessage string
+	ErrorDetail  string
 }
 
 type jwtClaims struct {
