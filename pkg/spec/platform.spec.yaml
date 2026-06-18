@@ -123,7 +123,7 @@ nouns:
         expr: epochMs(it.lastModifiedAt)
         field_type: ts
       - id: favorite
-        expr: it.isFavorite)
+        expr: it.isFavorite
       - id: last_moved_at
         expr: epochMs(it.lastMovedAt)
         field_type: ts
@@ -149,14 +149,14 @@ nouns:
         label: Role IDs
         expr: formatRoleIds(it.roleAssignmentMetadata)
       - id: disabled
-        expr: it.user.disabled)
+        expr: it.user.disabled
       - id: locked
-        expr: it.user.locked)
+        expr: it.user.locked
       - id: 2fa
         label: 2FA
-        expr: it.user.twoFactorAuthenticationEnabled)
+        expr: it.user.twoFactorAuthenticationEnabled
       - id: externally_managed
-        expr: it.user.externallyManaged)
+        expr: it.user.externallyManaged
 
   - noun: user_group
     short_desc: A named group of users used to assign roles and SSO mappings in bulk.
@@ -323,9 +323,9 @@ nouns:
       - id: source
         expr: it.setting.settingSource
       - id: editable
-        expr: it.setting.isSettingEditable)
+        expr: it.setting.isSettingEditable
       - id: allow_overrides
-        expr: it.setting.allowOverrides)
+        expr: it.setting.allowOverrides
       - id: value_type
         expr: it.setting.valueType
       - id: allowed_values
