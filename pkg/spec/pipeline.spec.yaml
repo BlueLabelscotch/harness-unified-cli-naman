@@ -93,6 +93,7 @@ nouns:
         expr: it.executionTriggerInfo.triggeredBy.extraInfo.email
       - id: error
         expr: it.failureInfo.message
+        width_max: 60
       - id: url
         expr: url(it)
 
@@ -255,6 +256,7 @@ nouns:
         expr: it["delegate"]
       - id: error
         expr: it["error"]
+        width_max: 60
       - id: identifier
         expr: it["identifier"]
       - id: fqn

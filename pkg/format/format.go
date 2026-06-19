@@ -99,6 +99,9 @@ func FormatArrayOutput(flags cmdctx.FormatFlags, isPty bool, data any, itemsExpr
 	}
 
 	if flags.Format != "json" {
+		if flags.Format == "tsv" {
+			return renderTSV(w, tspec, itemsExpr, data, flags.NoHeaders, exprEnv)
+		}
 		t, err := BuildTable(tspec, itemsExpr, data, flags.NoHeaders, exprEnv)
 		if err != nil {
 			return err
@@ -107,8 +110,6 @@ func FormatArrayOutput(flags cmdctx.FormatFlags, isPty bool, data any, itemsExpr
 		switch flags.Format {
 		case "csv":
 			t.RenderCSV()
-		case "tsv":
-			t.RenderTSV()
 		case "markdown":
 			t.RenderMarkdown()
 		default:
@@ -384,6 +385,7 @@ func BuildTable(tspec *spec.TableSpec, itemsExpr string, resp any, noHeaders boo
 		}
 		if col.WidthMax > 0 {
 			cfg.WidthMax = col.WidthMax
+			cfg.WidthMaxEnforcer = text.WrapSoft
 		}
 		if cfg.Align != text.AlignDefault || cfg.WidthMax > 0 {
 			colConfigs = append(colConfigs, cfg)
@@ -417,6 +419,61 @@ func BuildTable(tspec *spec.TableSpec, itemsExpr string, resp any, noHeaders boo
 	}
 
 	return t, nil
+}
+
+// renderTSV writes tab-separated output directly. If any value in a column
+// contains \t or \n, every value in that column is JSON-encoded so consumers
+// can reliably apply jq -r '.' to the whole column.
+func renderTSV(w io.Writer, tspec *spec.TableSpec, itemsExpr string, resp any, noHeaders bool, exprEnv map[string]any) error {
+	rows, err := evalItemsExpr(withIt(exprEnv, resp), itemsExpr)
+	if err != nil {
+		return fmt.Errorf("tsv items_expr %q: %w", itemsExpr, err)
+	}
+
+	ncols := len(tspec.Columns)
+
+	// first pass: collect all cell strings and flag columns that need encoding
+	grid := make([][]string, len(rows))
+	encodeCol := make([]bool, ncols)
+	for r, item := range rows {
+		env := withIt(exprEnv, item)
+		grid[r] = make([]string, ncols)
+		for i, col := range tspec.Columns {
+			val := evalColumnExpr(env, col.Expr)
+			if val == nil {
+				grid[r][i] = ""
+			} else {
+				s := fmt.Sprint(val)
+				grid[r][i] = s
+				if strings.ContainsAny(s, "\t\n") {
+					encodeCol[i] = true
+				}
+			}
+		}
+	}
+
+	jsonEncode := func(s string) string {
+		b, _ := json.Marshal(s)
+		return string(b)
+	}
+
+	if !noHeaders {
+		headers := make([]string, ncols)
+		for i, col := range tspec.Columns {
+			headers[i] = col.Header
+		}
+		fmt.Fprintln(w, strings.Join(headers, "\t"))
+	}
+
+	for _, cells := range grid {
+		for i := range cells {
+			if encodeCol[i] {
+				cells[i] = jsonEncode(cells[i])
+			}
+		}
+		fmt.Fprintln(w, strings.Join(cells, "\t"))
+	}
+	return nil
 }
 
 // withIt returns a shallow copy of env with "it" set to val.

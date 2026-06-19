@@ -78,6 +78,7 @@ nouns:
         expr: it["multi_level"]
       - id: verbs
         expr: it["verbs"]
+        width_max: 50
 
 commands:
   - command: auth login
