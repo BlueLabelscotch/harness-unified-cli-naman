@@ -655,44 +655,36 @@ func (m wizardModel) fetchProjects() tea.Cmd {
 
 // --- API helpers ---
 
-// fetchOrgItems fetches all organizations via the framework's FetchItems, falling back
-// to a direct HTTP call when no resolver is available (e.g. during login before auth exists).
 func fetchOrgItems(ctx *cmdctx.Ctx, apiURL, token, accountID string, authType pkgauth.AuthType) ([]orgItem, error) {
-	if ctx.Resolver != nil {
-		cs := ctx.Resolver.GetSpec("list", "organization")
-		if cs != nil && cs.Endpoint != nil && cs.Endpoint.Paging != nil {
-			fetchCtx := *ctx
-			fetchCtx.Verb = "list"
-			fetchCtx.Noun = "organization"
-			fetchCtx.Auth = newLoginResolvedAuth(apiURL, token, accountID, "", authType)
-			items, err := ctx.Resolver.FetchItems(&fetchCtx, cs.Endpoint, cmdctx.PagingFlags{All: true})
-			if err != nil {
-				return nil, fmt.Errorf("fetching organizations: %w", err)
-			}
-			return orgItemsFromRaw(items, "it.organization.identifier", "it.organization.name")
-		}
+	cs := ctx.Resolver.GetSpec("list", "organization")
+	if cs == nil || cs.Endpoint == nil || cs.Endpoint.Paging == nil {
+		return nil, fmt.Errorf("no spec found for list organization")
 	}
-	return fetchOrgsClient(apiURL, token, accountID, authType)
+	fetchCtx := *ctx
+	fetchCtx.Verb = "list"
+	fetchCtx.Noun = "organization"
+	fetchCtx.Auth = newLoginResolvedAuth(apiURL, token, accountID, "", authType)
+	items, err := ctx.Resolver.FetchItems(&fetchCtx, cs.Endpoint, cmdctx.PagingFlags{All: true})
+	if err != nil {
+		return nil, fmt.Errorf("fetching organizations: %w", err)
+	}
+	return orgItemsFromRaw(items, "it.organization.identifier", "it.organization.name")
 }
 
-// fetchProjectItems fetches all projects for the given org via the framework's FetchItems,
-// falling back to direct HTTP when no resolver is available.
 func fetchProjectItems(ctx *cmdctx.Ctx, apiURL, token, accountID, orgID string, authType pkgauth.AuthType) ([]orgItem, error) {
-	if ctx.Resolver != nil {
-		cs := ctx.Resolver.GetSpec("list", "project")
-		if cs != nil && cs.Endpoint != nil && cs.Endpoint.Paging != nil {
-			fetchCtx := *ctx
-			fetchCtx.Verb = "list"
-			fetchCtx.Noun = "project"
-			fetchCtx.Auth = newLoginResolvedAuth(apiURL, token, accountID, orgID, authType)
-			items, err := ctx.Resolver.FetchItems(&fetchCtx, cs.Endpoint, cmdctx.PagingFlags{All: true})
-			if err != nil {
-				return nil, fmt.Errorf("fetching projects: %w", err)
-			}
-			return orgItemsFromRaw(items, "it.project.identifier", "it.project.name")
-		}
+	cs := ctx.Resolver.GetSpec("list", "project")
+	if cs == nil || cs.Endpoint == nil || cs.Endpoint.Paging == nil {
+		return nil, fmt.Errorf("no spec found for list project")
 	}
-	return fetchProjectsClient(apiURL, token, accountID, orgID, authType)
+	fetchCtx := *ctx
+	fetchCtx.Verb = "list"
+	fetchCtx.Noun = "project"
+	fetchCtx.Auth = newLoginResolvedAuth(apiURL, token, accountID, orgID, authType)
+	items, err := ctx.Resolver.FetchItems(&fetchCtx, cs.Endpoint, cmdctx.PagingFlags{All: true})
+	if err != nil {
+		return nil, fmt.Errorf("fetching projects: %w", err)
+	}
+	return orgItemsFromRaw(items, "it.project.identifier", "it.project.name")
 }
 
 func newLoginResolvedAuth(apiURL, token, accountID, orgID string, authType pkgauth.AuthType) *pkgauth.ResolvedAuth {
@@ -778,72 +770,6 @@ func accountIDFromToken(token string) string {
 	return ""
 }
 
-func newLoginClient(apiURL, token, accountID string, authType pkgauth.AuthType) *hclient.Client {
-	ra := &pkgauth.ResolvedAuth{
-		APIUrl:    apiURL,
-		AuthType:  authType,
-		AccountID: accountID,
-	}
-	if authType == pkgauth.AuthTypeSSO {
-		ra.SSOToken = token
-	} else {
-		ra.PATToken = token
-	}
-	return hclient.NewWithAuth(context.Background(), ra)
-}
-
-func fetchOrgsClient(apiURL, token, accountID string, authType pkgauth.AuthType) ([]orgItem, error) {
-	c := newLoginClient(apiURL, token, accountID, authType)
-	resp, _, err := c.Get("/ng/api/organizations", map[string]string{
-		"accountIdentifier": accountID,
-		"pageSize":          "200",
-	})
-	if err != nil {
-		return nil, fmt.Errorf("fetching organizations: %w", err)
-	}
-	return orgItemsFromResponse(resp, "organization")
-}
-
-func fetchProjectsClient(apiURL, token, accountID, orgID string, authType pkgauth.AuthType) ([]orgItem, error) {
-	c := newLoginClient(apiURL, token, accountID, authType)
-	resp, _, err := c.Get("/ng/api/projects", map[string]string{
-		"accountIdentifier": accountID,
-		"orgIdentifier":     orgID,
-		"pageSize":          "200",
-	})
-	if err != nil {
-		return nil, fmt.Errorf("fetching projects: %w", err)
-	}
-	return orgItemsFromResponse(resp, "project")
-}
-
-func orgItemsFromResponse(resp any, key string) ([]orgItem, error) {
-	m, ok := resp.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("unexpected response type")
-	}
-	data, _ := m["data"].(map[string]any)
-	content, _ := data["content"].([]any)
-	out := make([]orgItem, 0, len(content))
-	for _, row := range content {
-		rm, ok := row.(map[string]any)
-		if !ok {
-			continue
-		}
-		inner, _ := rm[key].(map[string]any)
-		id, _ := inner["identifier"].(string)
-		name, _ := inner["name"].(string)
-		if id == "" {
-			continue
-		}
-		if name == "" {
-			name = id
-		}
-		out = append(out, orgItem{id: id, name: name})
-	}
-	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].name) < strings.ToLower(out[j].name) })
-	return out, nil
-}
 
 // --- RunLoginWizard / RunSetWizard ---
 

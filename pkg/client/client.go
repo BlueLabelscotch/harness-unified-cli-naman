@@ -222,7 +222,7 @@ func (c *Client) DoRequest(r Request) (any, http.Header, error) {
 		return nil, nil, fmt.Errorf("API request failed: %w", nerr)
 	}
 	defer resp.Body.Close()
-	hlog.Info(r.Method+" "+u.Path, "status", resp.StatusCode, "ms", elapsed, "url", u.String())
+	hlog.Info(r.Method+" "+u.Path, "status", resp.StatusCode, "ms", elapsed, "url", u.String(), "jwt", c.resolved.AuthType == auth.AuthTypeSSO)
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
