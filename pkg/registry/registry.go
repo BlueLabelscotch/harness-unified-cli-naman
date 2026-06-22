@@ -14,8 +14,8 @@ import (
 
 	"github.com/harness/harness-cli/pkg/auth"
 	"github.com/harness/harness-cli/pkg/cmdctx"
-	"github.com/harness/harness-cli/pkg/endpoint"
 	"github.com/harness/harness-cli/pkg/console"
+	"github.com/harness/harness-cli/pkg/endpoint"
 	"github.com/harness/harness-cli/pkg/exprenv"
 	"github.com/harness/harness-cli/pkg/format"
 	"github.com/harness/harness-cli/pkg/hbase"
@@ -371,30 +371,7 @@ func (r *Registry) buildVerbCommands() map[string]*cobra.Command {
 					if len(args) == 0 {
 						return cmd.Help()
 					}
-					noun := args[0]
-					msg := fmt.Sprintf("%q is not a valid noun for %q", noun, string(verbCopy))
-					seen := map[string]bool{}
-					var suggestions []string
-					addSuggestion := func(canonical string) {
-						if !seen[canonical] {
-							seen[canonical] = true
-							suggestions = append(suggestions, canonical)
-						}
-					}
-					for _, cs := range r.specs[verbCopy] {
-						if strutil.Levenshtein(noun, cs.FullNoun()) <= 3 {
-							addSuggestion(cs.FullNoun())
-						}
-					}
-					for alias, canonical := range r.nounAliases {
-						if strutil.Levenshtein(noun, alias) <= 3 {
-							addSuggestion(canonical)
-						}
-					}
-					if len(suggestions) > 0 {
-						msg += "\n\nDid you mean: " + strings.Join(suggestions, ", ") + "?"
-					}
-					return errors.New(msg)
+					return r.unknownNounError(verbCopy, args[0])
 				},
 			}
 		}
@@ -402,6 +379,59 @@ func (r *Registry) buildVerbCommands() map[string]*cobra.Command {
 		verbCmds[verb] = vc
 	}
 	return verbCmds
+}
+
+// unknownNounError returns a descriptive error for an unrecognized noun under verb.
+// It distinguishes between nouns that exist globally but aren't supported by this verb
+// vs. nouns that are simply unknown, and appends Levenshtein-based suggestions scoped
+// to nouns that are actually valid for verb.
+func (r *Registry) unknownNounError(verb, noun string) error {
+	resolvedNoun := noun
+	if canonical, ok := r.nounAliases[noun]; ok {
+		resolvedNoun = canonical
+	}
+	nounExistsForVerb := false
+	for _, cs := range r.specs[verb] {
+		if cs.Noun == resolvedNoun || cs.FullNoun() == noun {
+			nounExistsForVerb = true
+			break
+		}
+	}
+	_, nounRegistered := r.nouns[resolvedNoun]
+	var msg string
+	if nounRegistered && !nounExistsForVerb {
+		msg = fmt.Sprintf("%q is not supported for %q", noun, verb)
+	} else {
+		msg = fmt.Sprintf("%q is not a valid noun for %q", noun, verb)
+	}
+	seen := map[string]bool{}
+	var suggestions []string
+	addSuggestion := func(canonical string) {
+		if !seen[canonical] {
+			seen[canonical] = true
+			suggestions = append(suggestions, canonical)
+		}
+	}
+	for _, cs := range r.specs[verb] {
+		if strutil.Levenshtein(noun, cs.FullNoun()) <= 3 {
+			addSuggestion(cs.FullNoun())
+		}
+	}
+	for alias, canonical := range r.nounAliases {
+		if strutil.Levenshtein(noun, alias) > 3 {
+			continue
+		}
+		for _, cs := range r.specs[verb] {
+			if cs.Noun == canonical {
+				addSuggestion(canonical)
+				break
+			}
+		}
+	}
+	if len(suggestions) > 0 {
+		msg += "\n\nDid you mean: " + strings.Join(suggestions, ", ") + "?"
+	}
+	return errors.New(msg)
 }
 
 func addSetupFn(cmd *cobra.Command, vs VerbSpec, setup func(*cobra.Command, []string) error) {
