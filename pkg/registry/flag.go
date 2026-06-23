@@ -24,7 +24,7 @@ type flagSpec struct {
 }
 
 var (
-	specFormat      = flagSpec{name: "format", usage: "Output format: json, jsonl, table, csv, tsv"}
+	specFormat      = flagSpec{name: "format", usage: "Output format: json, yaml, jsonl, table, csv, tsv"}
 	specJson        = flagSpec{name: "json", kind: flagKindBool, usage: "Output as JSON (shorthand for --format json)"}
 	specColumns     = flagSpec{name: "columns", usage: `Columns to display by ID or expr, e.g. "name,org" or "+sparkline" or "Name:it.name"`}
 	specNoHeaders   = flagSpec{name: "no-headers", kind: flagKindBool, usage: "Suppress column headers (table/csv/tsv) and paging footer (table)"}

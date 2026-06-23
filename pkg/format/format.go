@@ -16,6 +16,7 @@ import (
 	"github.com/expr-lang/expr"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
+	"go.yaml.in/yaml/v3"
 
 	"github.com/harness/harness-cli/pkg/cmdctx"
 	"github.com/harness/harness-cli/pkg/console"
@@ -199,8 +200,8 @@ func FormatSingleOutput(flags cmdctx.FormatFlags, isPty bool, data any, itemExpr
 			flags.Format = "json"
 		}
 	}
-	if flags.Format != "json" && flags.Format != "text" {
-		return fmt.Errorf("format %q is not supported here; use json or text", flags.Format)
+	if flags.Format != "json" && flags.Format != "text" && flags.Format != "yaml" {
+		return fmt.Errorf("format %q is not supported here; use json, yaml, or text", flags.Format)
 	}
 
 	w, closeW, err := OpenWriter(flags.OutFile)
@@ -224,6 +225,9 @@ func FormatSingleOutput(flags cmdctx.FormatFlags, isPty bool, data any, itemExpr
 		}
 		return textFmt(w, extractutil.MakeDataAccessor(exprEnv, payload))
 	}
+	if flags.Format == "yaml" {
+		return writeYAML(w, payload)
+	}
 	return writeJSON(w, payload)
 }
 
@@ -236,6 +240,15 @@ func OpenWriter(outFile string) (io.Writer, func(), error) {
 		return nil, nil, fmt.Errorf("opening output file: %w", err)
 	}
 	return f, func() { f.Close() }, nil
+}
+
+func writeYAML(w io.Writer, data any) error {
+	out, err := yaml.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("formatting output: %w", err)
+	}
+	_, err = w.Write(out)
+	return err
 }
 
 func writeJSON(w io.Writer, data any) error {
