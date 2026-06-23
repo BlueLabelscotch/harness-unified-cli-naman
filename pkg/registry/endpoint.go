@@ -520,8 +520,17 @@ func setDotPath(m map[string]any, path string, val any) {
 func runGetThenPut(ctx *cmdctx.Ctx, ep *spec.EndpointSpec, c *client.Client, path string) (any, error) {
 	exprEnv := exprenv.Make(ctx)
 
+	getPath := path
+	if ep.GetPath != "" {
+		var err error
+		getPath, err = exprenv.ResolvePath(exprEnv, ep.GetPath)
+		if err != nil {
+			return nil, fmt.Errorf("get-then-put: resolving get_path %q: %w", ep.GetPath, err)
+		}
+	}
+
 	getQP := evalQueryParams(ctx, firstNonEmptyMap(ep.GetQueryParams, ep.QueryParams), true)
-	getResult, _, err := c.Get(path, getQP)
+	getResult, _, err := c.Get(getPath, getQP)
 	if err != nil {
 		return nil, fmt.Errorf("get-then-put: GET failed: %w", err)
 	}
@@ -583,8 +592,17 @@ func runGetThenPut(ctx *cmdctx.Ctx, ep *spec.EndpointSpec, c *client.Client, pat
 func runGetThenPutKV(ctx *cmdctx.Ctx, ep *spec.EndpointSpec, c *client.Client, path string) (any, error) {
 	exprEnv := exprenv.Make(ctx)
 
+	getPath := path
+	if ep.GetPath != "" {
+		var err error
+		getPath, err = exprenv.ResolvePath(exprEnv, ep.GetPath)
+		if err != nil {
+			return nil, fmt.Errorf("get-then-put-kv: resolving get_path %q: %w", ep.GetPath, err)
+		}
+	}
+
 	getQP := evalQueryParams(ctx, firstNonEmptyMap(ep.GetQueryParams, ep.QueryParams), true)
-	getResult, _, err := c.Get(path, getQP)
+	getResult, _, err := c.Get(getPath, getQP)
 	if err != nil {
 		return nil, fmt.Errorf("get-then-put-kv: GET failed: %w", err)
 	}

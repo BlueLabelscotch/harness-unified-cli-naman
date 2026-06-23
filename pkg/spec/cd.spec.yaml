@@ -142,18 +142,12 @@ commands:
   - command: create service
     verb: create
     noun: service
-    short: "Create a service: harness create service <id> --set name=<name> [description=...]"
+    short: "Create a service: harness create service <id> -f service.json"
     handler_type: endpoint
-    flags_builtin:
-      set: true
     endpoint:
       method: POST
+      file_body: required
       path: /ng/api/servicesV2
-      create_strategy: set-fields
-      create_body_init:
-        identifier: ctx.id
-        name: coalesce(ctx.setArgs.name, ctx.id)
-      create_body_wrap: ""
       item_expr: it.data
       text_header: "\nCreated service {{it.service.identifier}}\n"
 
@@ -168,8 +162,9 @@ commands:
     endpoint:
       method: PUT
       path: /ng/api/servicesV2
+      get_path: /ng/api/servicesV2/{{ctx.id}}
       update_strategy: get-then-put
-      update_body_pick: it.data.service
+      update_body_pick: it.service
       update_body_wrap: ""
       item_expr: it.data
       text_header: "\nUpdated service {{ctx.id}}\n"
@@ -232,19 +227,12 @@ commands:
   - command: create environment
     verb: create
     noun: environment
-    short: "Create an environment: harness create environment <id> --set name=<name> type=Production"
+    short: "Create an environment: harness create environment <id> -f environment.json"
     handler_type: endpoint
-    flags_builtin:
-      set: true
     endpoint:
       method: POST
+      file_body: required
       path: /ng/api/environmentsV2
-      create_strategy: set-fields
-      create_body_init:
-        identifier: ctx.id
-        name: coalesce(ctx.setArgs.name, ctx.id)
-        type: '"PreProduction"'
-      create_body_wrap: ""
       item_expr: it.data
       text_header: "\nCreated environment {{it.environment.identifier}}\n"
 
@@ -259,8 +247,9 @@ commands:
     endpoint:
       method: PUT
       path: /ng/api/environmentsV2
+      get_path: /ng/api/environmentsV2/{{ctx.id}}
       update_strategy: get-then-put
-      update_body_pick: it.data.environment
+      update_body_pick: it.environment
       update_body_wrap: ""
       item_expr: it.data
       text_header: "\nUpdated environment {{ctx.id}}\n"
@@ -332,18 +321,12 @@ commands:
   - command: create infrastructure
     verb: create
     noun: infrastructure
-    short: "Create an infrastructure: harness create infrastructure <id> --set name=<name> environmentRef=<env>"
+    short: "Create an infrastructure: harness create infrastructure <id> -f infrastructure.json"
     handler_type: endpoint
-    flags_builtin:
-      set: true
     endpoint:
       method: POST
+      file_body: required
       path: /ng/api/infrastructures
-      create_strategy: set-fields
-      create_body_init:
-        identifier: ctx.id
-        name: coalesce(ctx.setArgs.name, ctx.id)
-      create_body_wrap: ""
       item_expr: it.data
       text_header: "\nCreated infrastructure {{it.infrastructure.identifier}}\n"
 
@@ -358,8 +341,9 @@ commands:
     endpoint:
       method: PUT
       path: /ng/api/infrastructures
+      get_path: /ng/api/infrastructures/{{ctx.id}}
       update_strategy: get-then-put
-      update_body_pick: it.data.infrastructure
+      update_body_pick: it.infrastructure
       update_body_wrap: ""
       item_expr: it.data
       text_header: "\nUpdated infrastructure {{ctx.id}}\n"
@@ -425,19 +409,12 @@ commands:
   - command: create service_override
     verb: create
     noun: service_override
-    short: "Create a service override: harness create service_override <id> --set environmentRef=<env> type=ENV_GLOBAL_OVERRIDE"
+    short: "Create a service override: harness create service_override <id> -f service_override.json"
     handler_type: endpoint
-    flags_builtin:
-      set: true
     endpoint:
       method: POST
+      file_body: required
       path: /ng/api/serviceOverrides
-      create_strategy: set-fields
-      create_body_init:
-        identifier: ctx.id
-        environmentRef: coalesce(ctx.setArgs.environmentRef, ctx.setArgs.env, "")
-        type: coalesce(ctx.setArgs.type, '"ENV_GLOBAL_OVERRIDE"')
-      create_body_wrap: ""
       item_expr: it.data
       text_header: "\nCreated service override {{it.identifier}}\n"
 
@@ -452,8 +429,9 @@ commands:
     endpoint:
       method: PUT
       path: /ng/api/serviceOverrides
+      get_path: /ng/api/serviceOverrides/{{ctx.id}}
       update_strategy: get-then-put
-      update_body_pick: it.data
+      update_body_pick: it
       update_body_wrap: ""
       item_expr: it.data
       text_header: "\nUpdated service override {{ctx.id}}\n"

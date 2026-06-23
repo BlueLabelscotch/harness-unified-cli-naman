@@ -1057,8 +1057,9 @@ commands:
     endpoint:
       method: PUT
       path: /ng/api/connectors
+      get_path: /ng/api/connectors/{{ctx.id}}
       update_strategy: get-then-put
-      update_body_pick: it.data.connector
+      update_body_pick: it.connector
       update_body_wrap: connector
       item_expr: it.data
       text_header: "\nUpdated connector {{ctx.id}}\n"

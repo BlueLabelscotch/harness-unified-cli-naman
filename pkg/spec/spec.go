@@ -358,6 +358,10 @@ type EndpointSpec struct {
 	// UpdateBodyWrap is the key name used to re-wrap the picked subtree in the PUT body.
 	// e.g. "project" → PUT body becomes {"project": <mutated subtree>}
 	UpdateBodyWrap string `yaml:"update_body_wrap,omitempty"`
+	// GetPath overrides path for the GET leg of get-then-put and get-then-put-kv.
+	// Use when the GET and PUT endpoints have different paths (e.g. PUT /connectors, GET /connectors/{id}).
+	// When absent, path is used for both legs.
+	GetPath string `yaml:"get_path,omitempty"`
 	// GetQueryParams overrides query_params for the GET leg of get-then-put-kv.
 	// Use when the GET and PUT endpoints require different query parameters.
 	GetQueryParams map[string]string `yaml:"get_query_params,omitempty"`
