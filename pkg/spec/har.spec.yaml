@@ -881,8 +881,7 @@ commands:
     handler_type: workflow
     workflow_id: execute_registry_firewall_scan
     flags:
-      - name: file
-        short: f
+      - name: lockfile
         description: "Path to lock file (package-lock.json, pnpm-lock.yaml, yarn.lock, requirements.txt, pyproject.toml, Pipfile.lock, poetry.lock, pom.xml, build.gradle)"
         required: true
 
@@ -896,8 +895,7 @@ commands:
     handler_type: workflow
     workflow_id: execute_registry_migrate
     flags:
-      - name: file
-        short: f
+      - name: config
         description: "Path to migration config YAML"
         required: true
       - name: concurrency
