@@ -80,7 +80,10 @@ func callEndpointFull(ctx *cmdctx.Ctx, ep *spec.EndpointSpec, extraQueryParams m
 		if err != nil {
 			return nil, nil, err
 		}
-		ct := ep.ContentType
+		body, ct, err := cmdctx.NormalizeFileBody(body, ep.ContentType, cmdctx.GetString(ctx.FlagValues, "file"))
+		if err != nil {
+			return nil, nil, err
+		}
 		qp := evalQueryParams(ctx, ep.QueryParams, true, extraQueryParams)
 		if err := runEndpointValidators(ctx, ep, cmdctx.EndpointRequest{
 			Method:      method,
@@ -92,9 +95,6 @@ func callEndpointFull(ctx *cmdctx.Ctx, ep *spec.EndpointSpec, extraQueryParams m
 			return nil, nil, err
 		}
 		if method == "PUT" {
-			if ct == "" {
-				ct = "application/json"
-			}
 			if ep.UpdateBodyWrap != "" {
 				var parsed any
 				if err := json.Unmarshal([]byte(body), &parsed); err != nil {
@@ -103,9 +103,6 @@ func callEndpointFull(ctx *cmdctx.Ctx, ep *spec.EndpointSpec, extraQueryParams m
 				return c.Put(path, qp, map[string]any{ep.UpdateBodyWrap: parsed})
 			}
 			return c.PutRaw(path, qp, body, ct)
-		}
-		if ct == "" {
-			ct = "application/json"
 		}
 		return c.PostRaw(path, qp, body, ct)
 	}
