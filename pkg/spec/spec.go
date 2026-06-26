@@ -427,3 +427,16 @@ func (cs *CommandSpec) FullNoun() string {
 	}
 	return cs.Noun
 }
+
+// UsageLine returns the grammar portion of Short (after the first ": "), prefixed with "\nusage: ".
+// Returns empty string when Short is not set.
+func (cs *CommandSpec) UsageLine() string {
+	if cs.Short == "" {
+		return ""
+	}
+	short := cs.Short
+	if _, after, ok := strings.Cut(short, ": "); ok {
+		short = after
+	}
+	return "usage: " + short
+}
