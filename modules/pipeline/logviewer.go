@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 
 	"github.com/harness/harness-cli/pkg/auth"
 	"github.com/harness/harness-cli/pkg/cmdctx"
+	"github.com/harness/harness-cli/pkg/console"
 	"github.com/harness/harness-cli/pkg/format"
 	"github.com/harness/harness-cli/pkg/logstream"
 	"github.com/harness/harness-cli/pkg/tui"
@@ -129,6 +131,12 @@ type logViewModel struct {
 
 	width  int
 	height int
+
+	saveModal   bool
+	saveInput   string
+	saveStatus  string // "" = typing, error message, or "saved to <file>"
+	saveDone    bool   // true after successful write, waiting for dismiss
+	saveConfirm bool   // true when prompting y/n/a overwrite confirmation
 }
 
 const leftPanelWidth = 32
@@ -296,12 +304,96 @@ func (m logViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
+		// Modal intercepts all keys when open.
+		if m.saveModal {
+			switch msg.String() {
+			case "ctrl+c":
+				for _, ss := range m.activeStreams {
+					ss.cancel()
+				}
+				return m, tea.Quit
+			case "esc", "n":
+				if m.saveConfirm {
+					// "n" or esc on confirm → back to filename input
+					m.saveConfirm = false
+					m.saveStatus = ""
+					if msg.String() == "esc" {
+						// esc from confirm dismisses the whole modal
+						m.saveModal = false
+						m.saveInput = ""
+						m.saveDone = false
+					}
+				} else {
+					m.saveModal = false
+					m.saveInput = ""
+					m.saveStatus = ""
+					m.saveDone = false
+					m.saveConfirm = false
+				}
+			case "enter":
+				if m.saveDone {
+					m.saveModal = false
+					m.saveInput = ""
+					m.saveStatus = ""
+					m.saveDone = false
+					m.saveConfirm = false
+				} else if !m.saveConfirm {
+					if m.saveInput == "" {
+						break
+					}
+					if _, err := os.Stat(m.saveInput); err == nil {
+						// file exists — ask overwrite/append
+						m.saveConfirm = true
+					} else {
+						m.doSaveLog(false)
+					}
+				}
+			case "y":
+				if m.saveConfirm {
+					m.doSaveLog(false)
+					m.saveConfirm = false
+				} else if !m.saveDone {
+					m.saveInput += "y"
+					m.saveStatus = ""
+				}
+			case "a":
+				if m.saveConfirm {
+					m.doSaveLog(true)
+					m.saveConfirm = false
+				} else if !m.saveDone {
+					m.saveInput += "a"
+					m.saveStatus = ""
+				}
+			case "backspace", "delete":
+				if !m.saveDone && !m.saveConfirm && len(m.saveInput) > 0 {
+					m.saveInput = m.saveInput[:len(m.saveInput)-1]
+					m.saveStatus = ""
+				}
+			default:
+				if !m.saveDone && !m.saveConfirm && len(msg.String()) == 1 {
+					m.saveInput += msg.String()
+					m.saveStatus = ""
+				}
+			}
+			return m, nil
+		}
+
 		switch msg.String() {
 		case "ctrl+c", "q":
 			for _, ss := range m.activeStreams {
 				ss.cancel()
 			}
 			return m, tea.Quit
+		case "s":
+			if m.state == lvStateReady && m.selectedKey != "" {
+				if _, ok := m.logCache[m.selectedKey]; ok {
+					m.saveModal = true
+					m.saveInput = ""
+					m.saveStatus = ""
+					m.saveDone = false
+				}
+			}
+			return m, nil
 		case "r":
 			if m.state == lvStateReady && m.selectedKey != "" {
 				delete(m.logCache, m.selectedKey)
@@ -603,7 +695,14 @@ func (m logViewModel) View() tea.View {
 		m.renderSplit(&b)
 	}
 
-	v := tea.NewView(b.String())
+	background := b.String()
+	var out string
+	if m.saveModal {
+		out = overlayCenter(background, m.renderSaveModal(), m.width, m.height)
+	} else {
+		out = background
+	}
+	v := tea.NewView(out)
 	v.AltScreen = true
 	return v
 }
@@ -705,7 +804,7 @@ func (m logViewModel) renderSplit(b *strings.Builder) {
 	}
 
 	// help line: left side is fixed, right side shows poll state / scroll %
-	helpLeft := "  ↑/↓ select step · pgup/pgdn scroll log · r refresh · q quit"
+	helpLeft := "  ↑/↓ select step · pgup/pgdn scroll log · r refresh · s save · q quit"
 
 	var helpRight string
 	if !m.pipelineDone {
@@ -721,6 +820,111 @@ func (m logViewModel) renderSplit(b *strings.Builder) {
 	leftHint := st.scrollHint.Render(helpLeft)
 	rightHint := st.dim.Render(helpRight)
 	b.WriteString(leftHint + "  " + rightHint + "\n")
+}
+
+
+// doSaveLog writes the current step's log to m.saveInput.
+// append=true opens the file in append mode; false truncates/creates.
+func (m *logViewModel) doSaveLog(appendMode bool) {
+	content := console.StripANSI(m.logCache[m.selectedKey])
+	flag := os.O_WRONLY | os.O_CREATE
+	if appendMode {
+		flag |= os.O_APPEND
+	} else {
+		flag |= os.O_TRUNC
+	}
+	f, err := os.OpenFile(m.saveInput, flag, 0o644)
+	if err != nil {
+		m.saveStatus = "error: " + err.Error()
+		return
+	}
+	_, err = f.WriteString(content)
+	f.Close()
+	if err != nil {
+		m.saveStatus = "error: " + err.Error()
+		return
+	}
+	m.saveStatus = "saved to " + m.saveInput
+	m.saveDone = true
+}
+
+// overlayCenter composites the modal box over the background by replacing lines
+// at the vertical/horizontal center without blanking the rest of the screen.
+func overlayCenter(background, box string, w, h int) string {
+	bgLines := strings.Split(background, "\n")
+	boxLines := strings.Split(box, "\n")
+
+	boxH := len(boxLines)
+	boxW := 0
+	for _, l := range boxLines {
+		if lw := lipgloss.Width(l); lw > boxW {
+			boxW = lw
+		}
+	}
+
+	startRow := (h - boxH) / 2
+	startCol := (w - boxW) / 2
+	if startCol < 0 {
+		startCol = 0
+	}
+
+	out := make([]string, len(bgLines))
+	copy(out, bgLines)
+
+	for i, boxLine := range boxLines {
+		row := startRow + i
+		if row < 0 || row >= len(out) {
+			continue
+		}
+		bg := out[row]
+		// Split bg into runes so we can splice by visual column.
+		runes := []rune(bg)
+		prefix := ""
+		if startCol <= len(runes) {
+			prefix = string(runes[:startCol])
+		} else {
+			prefix = bg + strings.Repeat(" ", startCol-len(runes))
+		}
+		out[row] = prefix + boxLine
+	}
+
+	return strings.Join(out, "\n")
+}
+
+func (m logViewModel) renderSaveModal() string {
+	st := m.st
+	var body string
+
+	if m.saveConfirm {
+		prompt := st.normal.Render("File already exists:") + " " + st.header.Render(m.saveInput) + "\n\n" +
+			st.normal.Render("Overwrite?") + "\n\n" +
+			lipgloss.NewStyle().Bold(true).Render("y") + st.dim.Render(" yes  ") +
+			lipgloss.NewStyle().Bold(true).Render("a") + st.dim.Render(" append  ") +
+			lipgloss.NewStyle().Bold(true).Render("n") + st.dim.Render("/") +
+			lipgloss.NewStyle().Bold(true).Render("esc") + st.dim.Render(" cancel")
+		body = prompt
+	} else {
+		title := "Save log to file"
+		inputLine := "> " + m.saveInput + "█"
+		var statusLine string
+		if m.saveStatus != "" {
+			if m.saveDone {
+				statusLine = "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color(tui.CLISuccess)).Render(m.saveStatus) +
+					st.dim.Render("  (enter/esc to close)")
+			} else {
+				statusLine = "\n" + st.errStyle.Render(m.saveStatus)
+			}
+		}
+		hint := "\n" + st.dim.Render("enter to save · esc to cancel")
+		body = st.normal.Render(title) + "\n\n" + inputLine + statusLine + hint
+	}
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(tui.CLIAccent)).
+		Padding(1, 3).
+		Width(50).
+		Render(body)
 }
 
 // RunLogViewer launches the full-screen log viewer TUI.
