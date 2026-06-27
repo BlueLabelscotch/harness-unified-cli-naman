@@ -62,7 +62,11 @@ type LogKeyEntry struct {
 	Status     string
 	Depth      int
 	ParentName string
+	StartTs    int64
 	EndTs      int64
+	Delegates  []string // delegate names from delegateInfoList
+	Inputs     string   // raw JSON from stepParameters
+	Outputs    string   // raw JSON from outcomes
 }
 
 func RenderLogLinesToWriter(text, fmtFlag string, isPty bool, w io.Writer) error {
@@ -438,7 +442,20 @@ func FetchLogKeys(ctx *cmdctx.Ctx, execId string) ([]LogKeyEntry, string, error)
 			lk := node.LogBaseKey
 			if !seenKey[lk] {
 				seenKey[lk] = true
-				entries = append(entries, LogKeyEntry{LogKey: lk, Name: name, FQN: node.BaseFQN, Status: node.Status, Depth: depth, ParentName: parentName, EndTs: node.EndTs})
+				inputs := string(node.StepParameters)
+				outputs := ""
+				if len(node.Outcomes) > 0 {
+					if b, err := json.Marshal(node.Outcomes); err == nil {
+						outputs = string(b)
+					}
+				}
+				delegates := make([]string, 0, len(node.DelegateInfoList))
+				for _, d := range node.DelegateInfoList {
+					if d.Name != "" {
+						delegates = append(delegates, d.Name)
+					}
+				}
+				entries = append(entries, LogKeyEntry{LogKey: lk, Name: name, FQN: node.BaseFQN, Status: node.Status, Depth: depth, ParentName: parentName, StartTs: node.StartTs, EndTs: node.EndTs, Delegates: delegates, Inputs: inputs, Outputs: outputs})
 			}
 		}
 		for _, child := range g.NodeAdjacencyListMap[id].Children {
