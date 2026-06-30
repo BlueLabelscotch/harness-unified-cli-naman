@@ -21,7 +21,12 @@ func (m *logViewModel) doSaveLog(appendMode bool) {
 	if node != nil {
 		nodeUUID = node.UUID
 	}
-	content := console.StripANSI(m.logCache[nodeUUID])
+	lc := m.logCache[nodeUUID]
+	var raw string
+	if lc != nil {
+		raw = lc.rendered()
+	}
+	content := console.StripANSI(raw)
 	flag := os.O_WRONLY | os.O_CREATE
 	if appendMode {
 		flag |= os.O_APPEND

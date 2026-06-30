@@ -35,7 +35,7 @@ type lvStepsLoadedMsg struct {
 
 type lvLogLoadedMsg struct {
 	nodeUUID string
-	body     string
+	content  *logContent
 	err      error
 }
 
@@ -44,11 +44,13 @@ type lvPollMsg struct{}
 
 type lvLogStreamLineMsg struct {
 	nodeUUID string
+	unitIdx  int
 	lines    []string
 }
 
 type lvLogStreamDoneMsg struct {
 	nodeUUID string
+	unitIdx  int // which unit just finished; -1 means all done
 }
 
 // --- styles ---
@@ -77,11 +79,59 @@ func newLVStyles() lvStyles {
 	}
 }
 
+// --- log content ---
+
+// logContent accumulates per-unit log text and caches the last rendered string.
+// Only re-concatenates when a unit has been appended to since the last render.
+type logContent struct {
+	units []string // one entry per log unit (indexed same as LogUnits)
+	names []string // unit label for each entry
+	dirty bool
+	cache string
+}
+
+func newLogContent(units []execgraph.LogUnit) *logContent {
+	lc := &logContent{
+		units: make([]string, len(units)),
+		names: make([]string, len(units)),
+		dirty: true,
+	}
+	for i, u := range units {
+		lc.names[i] = u.Unit
+	}
+	return lc
+}
+
+func (lc *logContent) append(unitIdx int, text string) {
+	lc.units[unitIdx] += text
+	lc.dirty = true
+}
+
+func (lc *logContent) rendered() string {
+	if len(lc.units) == 1 {
+		return lc.units[0]
+	}
+	if !lc.dirty {
+		return lc.cache
+	}
+	var b strings.Builder
+	for i, text := range lc.units {
+		if i > 0 || text != "" {
+			fmt.Fprintf(&b, "──── %s ────\n", lc.names[i])
+		}
+		b.WriteString(text)
+	}
+	lc.cache = b.String()
+	lc.dirty = false
+	return lc.cache
+}
+
 // --- SSE stream handle ---
 
 type sseStream struct {
-	cancel context.CancelFunc
-	ch     chan logstream.Event
+	cancel  context.CancelFunc
+	ch      chan logstream.Event
+	unitIdx int // which unit is currently streaming
 }
 
 // --- model ---
@@ -103,8 +153,8 @@ type logViewModel struct {
 	steps     []execgraph.GraphNode
 	// selectedUUID is the UUID of the highlighted step; stable across polls.
 	selectedUUID    string
-	logCache        map[string]string    // nodeUUID → rendered log text
-	activeStreams   map[string]sseStream // nodeUUID → live SSE stream (running steps only)
+	logCache        map[string]*logContent // nodeUUID → accumulated log content
+	activeStreams   map[string]sseStream   // nodeUUID → live SSE stream (running steps only)
 	leftPanelW      int
 	leftPanelOffset int
 	pipelineDone    bool
@@ -172,7 +222,7 @@ func newLogViewModel(execLabel string, ctx *cmdctx.Ctx) logViewModel {
 		st:            st,
 		state:         lvStateLoading,
 		execLabel:     execLabel,
-		logCache:      make(map[string]string),
+		logCache:      make(map[string]*logContent),
 		activeStreams: make(map[string]sseStream),
 		spin:          sp,
 		vp:            vp,
@@ -219,13 +269,27 @@ func bareExecID(label string) string {
 	return label
 }
 
-func (m logViewModel) fetchLog(nodeUUID, logKey string) tea.Cmd {
+func (m logViewModel) fetchLog(node execgraph.GraphNode) tea.Cmd {
 	hc := &http.Client{Timeout: 30 * time.Second}
 	a := m.ctx.Auth
+	units := execgraph.GetLogUnits(node)
+	nodeUUID := node.UUID
+	fmtFlag := m.ctx.FormatFlags.Format
+	isPty := m.ctx.IsPty
 	return func() tea.Msg {
-		var buf strings.Builder
-		_, err := logstream.FetchAndPrintLog(hc, a, logKey, "", true, &buf)
-		return lvLogLoadedMsg{nodeUUID: nodeUUID, body: buf.String(), err: err}
+		if len(units) == 0 {
+			return lvLogLoadedMsg{nodeUUID: nodeUUID, content: nil}
+		}
+		lc := newLogContent(units)
+		for i, lu := range units {
+			var buf strings.Builder
+			_, err := logstream.FetchAndPrintLog(hc, a, lu.Key, fmtFlag, isPty, &buf)
+			if err != nil {
+				return lvLogLoadedMsg{nodeUUID: nodeUUID, err: err}
+			}
+			lc.append(i, buf.String())
+		}
+		return lvLogLoadedMsg{nodeUUID: nodeUUID, content: lc}
 	}
 }
 
@@ -487,51 +551,63 @@ func (m logViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if msg.body == "" {
-			m.logCache[msg.nodeUUID] = m.st.dim.Render("(no log content)")
+		if msg.content == nil {
+			m.logCache[msg.nodeUUID] = &logContent{units: []string{m.st.dim.Render("(no log content)")}, names: []string{""}, dirty: true}
 		} else {
-			m.logCache[msg.nodeUUID] = msg.body
+			m.logCache[msg.nodeUUID] = msg.content
 		}
 		node := m.selectedNode()
 		if node != nil && node.UUID == msg.nodeUUID {
-			m.vp.SetContent(m.logCache[msg.nodeUUID])
+			m.vp.SetContent(m.logCache[msg.nodeUUID].rendered())
 			m.vp.GotoTop()
 		}
 		return m, nil
 
 	case lvLogStreamLineMsg:
-		for _, line := range msg.lines {
-			m.logCache[msg.nodeUUID] += line
+		lc := m.logCache[msg.nodeUUID]
+		if lc != nil {
+			for _, line := range msg.lines {
+				lc.append(msg.unitIdx, line)
+			}
 		}
 		node := m.selectedNode()
-		if node != nil && node.UUID == msg.nodeUUID {
+		if node != nil && node.UUID == msg.nodeUUID && lc != nil {
 			atBottom := m.vp.AtBottom()
-			m.vp.SetContent(m.logCache[msg.nodeUUID])
+			m.vp.SetContent(lc.rendered())
 			if atBottom {
 				m.vp.GotoBottom()
 			}
 		}
 		// Re-arm: read next event from the channel.
 		if ss, ok := m.activeStreams[msg.nodeUUID]; ok {
-			return m, waitForSSEEvent(msg.nodeUUID, ss.ch)
+			return m, waitForSSEEvent(msg.nodeUUID, ss.ch, ss.unitIdx)
 		}
 		return m, nil
 
 	case lvLogStreamDoneMsg:
+		if msg.unitIdx >= 0 {
+			// Unit boundary: advance unitIdx and re-arm to read the next unit's lines.
+			if ss, ok := m.activeStreams[msg.nodeUUID]; ok {
+				ss.unitIdx = msg.unitIdx
+				m.activeStreams[msg.nodeUUID] = ss
+				return m, waitForSSEEvent(msg.nodeUUID, ss.ch, msg.unitIdx)
+			}
+			return m, nil
+		}
 		if ss, ok := m.activeStreams[msg.nodeUUID]; ok {
 			ss.cancel()
 			delete(m.activeStreams, msg.nodeUUID)
 		}
 		// If cache is empty (SSE produced nothing), fall back to blob fetch.
-		if _, hasCached := m.logCache[msg.nodeUUID]; !hasCached {
+		lc := m.logCache[msg.nodeUUID]
+		if lc == nil || lc.rendered() == "" {
 			node := m.selectedNode()
 			if node != nil && node.UUID == msg.nodeUUID {
-				lk := execgraph.GetLogKey(*node)
 				m.loading = true
 				m.vp.SetContent(m.st.dim.Render("loading…"))
 				return m, tea.Batch(
 					func() tea.Msg { return m.spin.Tick() },
-					m.fetchLog(node.UUID, lk),
+					m.fetchLog(*node),
 				)
 			}
 		}
@@ -560,12 +636,22 @@ func (m *logViewModel) resizeComponents() {
 	m.vp.SetHeight(vpH)
 }
 
-// startSSEStream opens an SSE connection for a running step, registers it in
-// activeStreams keyed by nodeUUID, and returns the first waitForSSEEvent Cmd.
-func (m *logViewModel) startSSEStream(nodeUUID, logKey string) tea.Cmd {
+// startSSEStream opens SSE connections for all log units of a running step,
+// streaming them sequentially. Registers the stream in activeStreams and returns
+// the first waitForSSEEvent Cmd.
+func (m *logViewModel) startSSEStream(node execgraph.GraphNode) tea.Cmd {
+	units := execgraph.GetLogUnits(node)
+	if len(units) == 0 {
+		return nil
+	}
+	nodeUUID := node.UUID
 	ctx, cancel := context.WithCancel(context.Background())
 	ch := make(chan logstream.Event, 64)
-	m.activeStreams[nodeUUID] = sseStream{cancel: cancel, ch: ch}
+	m.activeStreams[nodeUUID] = sseStream{cancel: cancel, ch: ch, unitIdx: 0}
+	// Pre-populate logContent so append() has valid slots.
+	if m.logCache[nodeUUID] == nil {
+		m.logCache[nodeUUID] = newLogContent(units)
+	}
 
 	hc := &http.Client{Timeout: 90 * time.Minute}
 	a := m.ctx.Auth
@@ -573,22 +659,33 @@ func (m *logViewModel) startSSEStream(nodeUUID, logKey string) tea.Cmd {
 	isPty := m.ctx.IsPty
 
 	go func() {
-		logstream.StreamSSEToChannel(ctx, hc, a, logKey, "", fmtFlag, isPty, ch) //nolint
+		for i, lu := range units {
+			// Signal unit boundary so the model can advance unitIdx.
+			if i > 0 {
+				ch <- logstream.Event{Kind: logstream.EvStart, Source: fmt.Sprintf("%d", i)}
+			}
+			logstream.StreamSSEToChannel(ctx, hc, a, lu.Key, "", fmtFlag, isPty, ch) //nolint
+		}
 		close(ch)
 	}()
 
-	return waitForSSEEvent(nodeUUID, ch)
+	return waitForSSEEvent(nodeUUID, ch, 0)
 }
 
 // waitForSSEEvent reads one event from the SSE channel and returns it as a
 // bubbletea message. Called recursively via Cmd until the channel closes.
-func waitForSSEEvent(nodeUUID string, ch <-chan logstream.Event) tea.Cmd {
+func waitForSSEEvent(nodeUUID string, ch <-chan logstream.Event, unitIdx int) tea.Cmd {
 	return func() tea.Msg {
 		ev, ok := <-ch
 		if !ok {
-			return lvLogStreamDoneMsg{nodeUUID: nodeUUID}
+			return lvLogStreamDoneMsg{nodeUUID: nodeUUID, unitIdx: -1}
 		}
-		return lvLogStreamLineMsg{nodeUUID: nodeUUID, lines: ev.Lines}
+		// EvStart with numeric source is our unit-boundary sentinel.
+		if ev.Kind == logstream.EvStart {
+			newIdx := unitIdx + 1
+			return lvLogStreamDoneMsg{nodeUUID: nodeUUID, unitIdx: newIdx}
+		}
+		return lvLogStreamLineMsg{nodeUUID: nodeUUID, unitIdx: unitIdx, lines: ev.Lines}
 	}
 }
 
@@ -603,8 +700,7 @@ func (m *logViewModel) maybeLoadLog() tea.Cmd {
 	if node == nil {
 		return nil
 	}
-	lk := execgraph.GetLogKey(*node)
-	if lk == "" {
+	if !execgraph.HasLogs(*node) {
 		m.vp.SetContent(m.st.dim.Render("(no logs for this step)"))
 		m.vp.GotoTop()
 		return nil
@@ -614,8 +710,8 @@ func (m *logViewModel) maybeLoadLog() tea.Cmd {
 
 	if terminal {
 		// Blob path: show cache if present, otherwise fetch.
-		if body, ok := m.logCache[node.UUID]; ok {
-			m.vp.SetContent(body)
+		if lc, ok := m.logCache[node.UUID]; ok {
+			m.vp.SetContent(lc.rendered())
 			m.vp.GotoTop()
 			return nil
 		}
@@ -623,13 +719,13 @@ func (m *logViewModel) maybeLoadLog() tea.Cmd {
 		m.vp.SetContent(m.st.dim.Render("loading…"))
 		return tea.Batch(
 			func() tea.Msg { return m.spin.Tick() },
-			m.fetchLog(node.UUID, lk),
+			m.fetchLog(*node),
 		)
 	}
 
 	// Running path: show current cache (may be empty) and ensure stream is live.
-	if body, ok := m.logCache[node.UUID]; ok {
-		m.vp.SetContent(body)
+	if lc, ok := m.logCache[node.UUID]; ok {
+		m.vp.SetContent(lc.rendered())
 		m.vp.GotoBottom()
 	} else {
 		m.vp.SetContent(m.st.dim.Render("connecting…"))
@@ -641,7 +737,7 @@ func (m *logViewModel) maybeLoadLog() tea.Cmd {
 	}
 	return tea.Batch(
 		func() tea.Msg { return m.spin.Tick() },
-		m.startSSEStream(node.UUID, lk),
+		m.startSSEStream(*node),
 	)
 }
 

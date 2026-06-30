@@ -211,19 +211,10 @@ func ShortLogKey(key string) string {
 	return key
 }
 
-// FindNodeForFollow finds the graph node whose logBaseKey matches the given key.
-// Matches against both the full raw logBaseKey and its short form (after pipeline/ prefix).
-func FindNodeForFollow(g execgraph.ExecutionGraph, logKey string) (execgraph.GraphNode, bool) {
-	for _, node := range g.NodeMap {
-		if !execgraph.HasLogs(node) {
-			continue
-		}
-		fk := execgraph.GetLogKey(node)
-		if fk == logKey || ShortLogKey(fk) == logKey {
-			return node, true
-		}
-	}
-	return execgraph.GraphNode{}, false
+// FindNodeForFollow finds the graph node with the given UUID.
+func FindNodeForFollow(g execgraph.ExecutionGraph, uuid string) (execgraph.GraphNode, bool) {
+	node, ok := g.NodeMap[uuid]
+	return node, ok
 }
 
 // IsTerminalStatus returns true when a step or pipeline has reached a final state.
@@ -519,10 +510,9 @@ func FollowMulti(ctx *cmdctx.Ctx, execId, stageFilter, stepFilter string, style 
 	}
 
 	type nodeEntry struct {
-		logKey string
-		name   string
-		node   execgraph.GraphNode
-		rank   int
+		logUnits []execgraph.LogUnit
+		node     execgraph.GraphNode
+		rank     int
 	}
 
 	pollOnce := func() (string, error) {
@@ -534,7 +524,6 @@ func FollowMulti(ctx *cmdctx.Ctx, execId, stageFilter, stepFilter string, style 
 		execgraph.AssignRanks(exec.Graph.RootNodeID, 1, exec.Graph.NodeMap, exec.Graph.NodeAdjacencyListMap)
 
 		seenNode := make(map[string]bool)
-		seenKey := make(map[string]bool)
 		var newNodes []nodeEntry
 		var walk func(id string, parentName string)
 		walk = func(id string, parentName string) {
@@ -545,14 +534,10 @@ func FollowMulti(ctx *cmdctx.Ctx, execId, stageFilter, stepFilter string, style 
 			node := exec.Graph.NodeMap[id]
 			name := execgraph.NodeName(node)
 			if execgraph.HasLogs(node) && !skipTypes[node.StepType] {
-				lk := execgraph.GetLogKey(node)
-				if !seenKey[lk] {
-					seenKey[lk] = true
-					if !nodeStarted[lk] && nodeMatchesFilter(node, parentName) {
-						bucket := format.ClassifyExecutionStatus(node.Status)
-						if bucket == format.StatusRunning || bucket == format.StatusSuccess || bucket == format.StatusSkipped || bucket == format.StatusFailed {
-							newNodes = append(newNodes, nodeEntry{logKey: lk, name: node.BaseFQN, node: node, rank: node.Rank})
-						}
+				if !nodeStarted[node.UUID] && nodeMatchesFilter(node, parentName) {
+					bucket := format.ClassifyExecutionStatus(node.Status)
+					if bucket == format.StatusRunning || bucket == format.StatusSuccess || bucket == format.StatusSkipped || bucket == format.StatusFailed {
+						newNodes = append(newNodes, nodeEntry{logUnits: execgraph.GetLogUnits(node), node: node, rank: node.Rank})
 					}
 				}
 			}
@@ -573,7 +558,7 @@ func FollowMulti(ctx *cmdctx.Ctx, execId, stageFilter, stepFilter string, style 
 			if e.node.EndTs > 0 {
 				age = time.Since(time.UnixMilli(e.node.EndTs)).Truncate(time.Millisecond)
 			}
-			hlog.Debug("new node discovered", "key", e.logKey, "status", e.node.Status, "startTs", e.node.StartTs, "endTs", e.node.EndTs, "age", age, "rank", e.rank)
+			hlog.Debug("new node discovered", "uuid", e.node.UUID, "fqn", e.node.BaseFQN, "units", len(e.logUnits), "status", e.node.Status, "startTs", e.node.StartTs, "endTs", e.node.EndTs, "age", age, "rank", e.rank)
 		}
 
 		for i := 1; i < len(newNodes); i++ {
@@ -586,7 +571,7 @@ func FollowMulti(ctx *cmdctx.Ctx, execId, stageFilter, stepFilter string, style 
 				if bTs == 0 {
 					bTs = 1<<62 - 1
 				}
-				if aTs > bTs || (aTs == bTs && a.rank > b.rank) || (aTs == bTs && a.rank == b.rank && a.logKey > b.logKey) {
+				if aTs > bTs || (aTs == bTs && a.rank > b.rank) || (aTs == bTs && a.rank == b.rank && a.node.UUID > b.node.UUID) {
 					newNodes[j-1], newNodes[j] = newNodes[j], newNodes[j-1]
 				} else {
 					break
@@ -594,44 +579,58 @@ func FollowMulti(ctx *cmdctx.Ctx, execId, stageFilter, stepFilter string, style 
 			}
 		}
 
+		// unitSource returns the source label for a log unit.
+		// With a single unit, just the FQN is used (matching the web UI's single-section behaviour).
+		// With multiple units, the unit name is appended so each section is identifiable.
+		unitSource := func(fqn, unit string, total int) string {
+			if total <= 1 {
+				return fqn
+			}
+			return fqn + " / " + unit
+		}
+
 		type blobResult struct {
-			ev  Event
+			evs []Event
 			end Event
 			err error
 		}
 		type pendingBlob struct {
 			e      nodeEntry
-			source string
 			result chan blobResult
 		}
 		var blobs []pendingBlob
 		for i := range newNodes {
 			e := newNodes[i]
-			nodeStarted[e.logKey] = true
+			nodeStarted[e.node.UUID] = true
 			if !IsTerminalStatus(e.node.Status) {
 				continue
 			}
-			source := e.name
 			rc := make(chan blobResult, 1)
-			blobs = append(blobs, pendingBlob{e: e, source: source, result: rc})
+			blobs = append(blobs, pendingBlob{e: e, result: rc})
 			go func() {
-				var bev Event
-				var buf strings.Builder
-				hasContent, fetchErr := FetchAndPrintLogWithRetry(hc, a, e.logKey, fmtFlag, ctx.IsPty, &buf, e.node.EndTs)
-				if fetchErr == nil && hasContent {
-					lines := strings.Split(buf.String(), "\n")
-					if len(lines) > 0 && lines[len(lines)-1] == "" {
-						lines = lines[:len(lines)-1]
+				var evs []Event
+				for _, lu := range e.logUnits {
+					src := unitSource(e.node.BaseFQN, lu.Unit, len(e.logUnits))
+					var buf strings.Builder
+					hasContent, fetchErr := FetchAndPrintLogWithRetry(hc, a, lu.Key, fmtFlag, ctx.IsPty, &buf, e.node.EndTs)
+					if fetchErr != nil {
+						rc <- blobResult{err: fetchErr}
+						return
 					}
-					for i := range lines {
-						lines[i] += "\n"
+					if hasContent {
+						lines := strings.Split(buf.String(), "\n")
+						if len(lines) > 0 && lines[len(lines)-1] == "" {
+							lines = lines[:len(lines)-1]
+						}
+						for i := range lines {
+							lines[i] += "\n"
+						}
+						evs = append(evs, Event{Kind: EvBlob, Source: src, Lines: lines})
 					}
-					bev = Event{Kind: EvBlob, Source: source, Lines: lines}
 				}
 				rc <- blobResult{
-					ev:  bev,
-					end: Event{Kind: EvEnd, Source: source, Node: e.node},
-					err: fetchErr,
+					evs: evs,
+					end: Event{Kind: EvEnd, Source: e.node.BaseFQN, Node: e.node},
 				}
 			}()
 		}
@@ -639,43 +638,56 @@ func FollowMulti(ctx *cmdctx.Ctx, execId, stageFilter, stepFilter string, style 
 		blobIdx := 0
 		for i := range newNodes {
 			e := newNodes[i]
-			source := e.name
 			if format.ClassifyExecutionStatus(e.node.Status) != format.StatusSkipped {
 				startTs := e.node.StartTs
 				if startTs == 0 {
 					startTs = time.Now().UnixMilli()
 				}
-				ch <- Event{Kind: EvStart, Source: source, StartTs: startTs}
+				ch <- Event{Kind: EvStart, Source: e.node.BaseFQN, StartTs: startTs}
 			}
 
 			if IsTerminalStatus(e.node.Status) {
 				r := <-blobs[blobIdx].result
 				blobIdx++
 				if r.err != nil {
-					fmt.Fprintf(os.Stderr, "error fetching log %s: %v\n", source, r.err)
-				} else if len(r.ev.Lines) > 0 {
-					ch <- r.ev
+					fmt.Fprintf(os.Stderr, "error fetching log %s: %v\n", e.node.BaseFQN, r.err)
+				} else {
+					for _, ev := range r.evs {
+						ch <- ev
+					}
 				}
 				ch <- r.end
 			} else {
 				hasSSE = true
-				lk, src, nd := e.logKey, source, e.node
+				nd := e.node
+				logUnits := e.logUnits
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					sseHadContent, _ := StreamSSEToChannel(sseCtx, hc, a, lk, src, fmtFlag, ctx.IsPty, ch)
+					// Stream each unit sequentially; units are sequential phases of the step.
+					var anyContent bool
+					for _, lu := range logUnits {
+						src := unitSource(nd.BaseFQN, lu.Unit, len(logUnits))
+						had, _ := StreamSSEToChannel(sseCtx, hc, a, lu.Key, src, fmtFlag, ctx.IsPty, ch)
+						if had {
+							anyContent = true
+						}
+					}
 					exec2, err2 := execgraph.FetchExecutionFull(ctx, execId)
 					if err2 == nil {
-						if node2, ok := FindNodeForFollow(exec2.Graph, lk); ok {
-							if !sseHadContent {
-								hlog.Debug("SSE had no content, falling back to blob", "key", lk)
-								FetchBlobToChannel(hc, a, lk, src, fmtFlag, ctx.IsPty, ch, node2.EndTs) //nolint
+						if node2, ok := FindNodeForFollow(exec2.Graph, nd.UUID); ok {
+							if !anyContent {
+								hlog.Debug("SSE had no content, falling back to blob", "fqn", nd.BaseFQN)
+								for _, lu := range execgraph.GetLogUnits(node2) {
+									src := unitSource(nd.BaseFQN, lu.Unit, len(logUnits))
+									FetchBlobToChannel(hc, a, lu.Key, src, fmtFlag, ctx.IsPty, ch, node2.EndTs) //nolint
+								}
 							}
-							ch <- Event{Kind: EvEnd, Source: src, Node: node2}
+							ch <- Event{Kind: EvEnd, Source: nd.BaseFQN, Node: node2}
 							return
 						}
 					}
-					ch <- Event{Kind: EvEnd, Source: src, Node: execgraph.GraphNode{
+					ch <- Event{Kind: EvEnd, Source: nd.BaseFQN, Node: execgraph.GraphNode{
 						Status: nd.Status,
 						EndTs:  time.Now().UnixMilli(),
 					}}

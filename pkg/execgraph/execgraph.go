@@ -171,31 +171,61 @@ func (n GraphNode) ToMap() map[string]any {
 	return m
 }
 
+// LogUnit pairs a log service key with its human-readable section label.
+type LogUnit struct {
+	Key  string
+	Unit string
+}
+
+// GetLogUnits returns the ordered log units for a node, drawn from
+// executableResponses[0] only (matching the web-UI behaviour). Units come
+// from the parallel units[] array; if that is shorter than logKeys[], synthetic
+// labels ("Section 1", "Section 2", …) are used for the remainder.
+func GetLogUnits(node GraphNode) []LogUnit {
+	if len(node.ExecutableResponses) == 0 {
+		return nil
+	}
+	er := node.ExecutableResponses[0]
+	keys := erLogKeys(er)
+	units := erUnits(er)
+	var out []LogUnit
+	for i, k := range keys {
+		if k == "" {
+			continue
+		}
+		label := ""
+		if i < len(units) && units[i] != "" {
+			label = units[i]
+		} else {
+			label = fmt.Sprintf("Section %d", i+1)
+		}
+		out = append(out, LogUnit{Key: k, Unit: label})
+	}
+	return out
+}
+
 // HasLogs reports whether the node has any log content to fetch.
 func HasLogs(node GraphNode) bool {
+	if len(GetLogUnits(node)) > 0 {
+		return true
+	}
 	return node.LogBaseKey != ""
 }
 
-// GetLogKey returns the correct log service key to use when fetching logs for
-// a node. Steps like ShellScript and Http store their logs at a sub-key
-// embedded in executableResponses rather than at logBaseKey directly.
+// GetLogKey returns the first log key for a node, for callers that only need one.
 func GetLogKey(node GraphNode) string {
-	keys := GetAllLogKeys(node)
-	if len(keys) > 0 {
-		return keys[0]
+	if units := GetLogUnits(node); len(units) > 0 {
+		return units[0].Key
 	}
 	return node.LogBaseKey
 }
 
-// GetAllLogKeys returns all log keys from a node's executableResponses.
+// GetAllLogKeys returns all log keys from executableResponses[0].
 func GetAllLogKeys(node GraphNode) []string {
-	var keys []string
-	for _, er := range node.ExecutableResponses {
-		for _, lk := range erLogKeys(er) {
-			if lk != "" {
-				keys = append(keys, lk)
-			}
-		}
+	units := GetLogUnits(node)
+	keys := make([]string, len(units))
+	for i, u := range units {
+		keys[i] = u.Key
 	}
 	return keys
 }
@@ -221,6 +251,31 @@ func erLogKeys(er ExecutableResponse) []string {
 	}
 	if er.Children != nil {
 		return er.Children.LogKeys
+	}
+	return nil
+}
+
+func erUnits(er ExecutableResponse) []string {
+	if er.Task != nil {
+		return er.Task.Units
+	}
+	if er.TaskChain != nil {
+		return er.TaskChain.Units
+	}
+	if er.Async != nil {
+		return er.Async.Units
+	}
+	if er.AsyncChain != nil {
+		return er.AsyncChain.Units
+	}
+	if er.Sync != nil {
+		return er.Sync.Units
+	}
+	if er.Child != nil {
+		return er.Child.Units
+	}
+	if er.Children != nil {
+		return er.Children.Units
 	}
 	return nil
 }
