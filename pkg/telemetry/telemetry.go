@@ -27,6 +27,7 @@ package telemetry
 import (
 	"os"
 	"runtime"
+	"strings"
 	"syscall"
 
 	"golang.org/x/term"
@@ -90,6 +91,10 @@ type CommandIntent struct {
 	// AccountID from resolved auth. Empty for commands that skip auth.
 	AccountID string
 
+	// UserDomain is the domain portion of the user's profile email (e.g. "harness.io").
+	// Never the full email address.
+	UserDomain string
+
 	// RunID correlates all API calls from this invocation. Mirrors hbase.RunID.
 	RunID string
 
@@ -100,11 +105,12 @@ type CommandIntent struct {
 // a prior [CommandIntent] for the same invocation.
 type CommandError struct {
 	// Mirror of CommandIntent identity fields for correlation.
-	Verb      string
-	Noun      string
-	Module    string
-	AccountID string
-	RunID     string
+	Verb       string
+	Noun       string
+	Module     string
+	AccountID  string
+	UserDomain string
+	RunID      string
 
 	Category   ErrorCategory
 	DurationMs int64
@@ -167,6 +173,15 @@ func ClassifyError(err error) ErrorCategory {
 		return ErrorCategoryTimeout
 	}
 	return ErrorCategoryUnknown
+}
+
+// UserDomainFromEmail extracts the domain portion of an email address (e.g. "harness.io").
+// Returns empty string if email is empty or malformed.
+func UserDomainFromEmail(email string) string {
+	if i := strings.LastIndex(email, "@"); i >= 0 {
+		return email[i+1:]
+	}
+	return ""
 }
 
 func shouldRecord(env Env) bool {
