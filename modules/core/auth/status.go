@@ -41,19 +41,21 @@ type statusChecks struct {
 }
 
 type statusResult struct {
-	Source      string       `json:"Source"`
-	Profile     string       `json:"Profile"`
-	APIUrl      string       `json:"APIUrl"`
-	RegistryURL string       `json:"RegistryURL,omitempty"`
-	AccountID   string       `json:"AccountID"`
-	OrgID       string       `json:"OrgID,omitempty"`
-	ProjectID   string       `json:"ProjectID,omitempty"`
-	ProjectURL  string       `json:"ProjectURL,omitempty"`
-	IsSAT       bool         `json:"IsSAT,omitempty"`
-	TokenType   string       `json:"TokenType,omitempty"`
-	SATIdentity string       `json:"SATIdentity,omitempty"` // "username (email)" from token/validate
-	Status      statusChecks `json:"Status"`
-	CurrentUser any          `json:"CurrentUser,omitempty"`
+	Source             string       `json:"Source"`
+	Profile            string       `json:"Profile"`
+	APIUrl             string       `json:"APIUrl"`
+	RegistryURL        string       `json:"RegistryURL,omitempty"`
+	AccountID          string       `json:"AccountID"`
+	OrgID              string       `json:"OrgID,omitempty"`
+	ProjectID          string       `json:"ProjectID,omitempty"`
+	ProjectURL         string       `json:"ProjectURL,omitempty"`
+	IsSAT              bool         `json:"IsSAT,omitempty"`
+	TokenType          string       `json:"TokenType,omitempty"`
+	SATIdentity        string       `json:"SATIdentity,omitempty"`        // "username (email)" from token/validate
+	TokenValidTo       int64        `json:"TokenValidTo,omitempty"`       // epoch ms from token/validate; 0 = no expiry
+	RefreshTokenExpiry int64        `json:"RefreshTokenExpiry,omitempty"` // epoch ms; SSO refresh token expiry
+	Status             statusChecks `json:"Status"`
+	CurrentUser        any          `json:"CurrentUser,omitempty"`
 }
 
 const apiTimeout = 5 * time.Second
@@ -110,15 +112,6 @@ func runStatusChecks(profileFlag string) statusResult {
 		r.Status.Project = &skip
 		return r
 	}
-	if err := auth.CheckAndUpdateAccessToken(resolved, time.Now()); err != nil {
-		r.Status.Profile = checkResult{OK: false, Error: err.Error()}
-		r.Status.API = skip
-		r.Status.User = skip
-		r.Status.Account = skip
-		r.Status.Org = &skip
-		r.Status.Project = &skip
-		return r
-	}
 	r.Source = resolved.Source
 	r.Profile = profileName(resolved.Source)
 	r.APIUrl = resolved.APIUrl
@@ -130,10 +123,22 @@ func runStatusChecks(profileFlag string) statusResult {
 	switch {
 	case resolved.AuthType == auth.AuthTypeSSO:
 		r.TokenType = "SSO"
+		if exp, err := auth.AccessTokenExpiry(resolved.RefreshToken); err == nil {
+			r.RefreshTokenExpiry = exp.UnixMilli()
+		}
 	case auth.TokenType(resolved.PATToken) == auth.TokenKindSAT:
 		r.TokenType = "SAT"
 	default:
 		r.TokenType = "PAT"
+	}
+	if err := auth.CheckAndUpdateAccessToken(resolved, time.Now()); err != nil {
+		r.Status.Profile = checkResult{OK: false, Error: err.Error()}
+		r.Status.API = skip
+		r.Status.User = skip
+		r.Status.Account = skip
+		r.Status.Org = &skip
+		r.Status.Project = &skip
+		return r
 	}
 	r.Status.Profile = checkResult{OK: true}
 
@@ -160,7 +165,7 @@ func runStatusChecks(profileFlag string) statusResult {
 	isSAT := auth.TokenType(resolved.PATToken) == auth.TokenKindSAT
 	var resolvedEmail string // email discovered during user check
 	if isSAT {
-		identity, err := validateSATToken(resolved)
+		identity, validTo, err := validateSATToken(resolved)
 		if err != nil {
 			r.Status.User = checkResult{OK: false, Error: err.Error()}
 			r.Status.Account = skip
@@ -169,6 +174,7 @@ func runStatusChecks(profileFlag string) statusResult {
 			return r
 		}
 		r.SATIdentity = identity
+		r.TokenValidTo = validTo
 		r.Status.User = checkResult{OK: true}
 		// Extract email from the SAT identity response for profile update below.
 		resolvedEmail = fetchTokenEmail(resolved.APIUrl, resolved.PATToken, resolved.AccountID)
@@ -179,7 +185,8 @@ func runStatusChecks(profileFlag string) statusResult {
 		}
 		r.Status.User = checkResult{OK: true}
 	} else {
-		currentUser, err := fetchCurrentUser(resolved)
+		// Validate the PAT token first — this is authoritative for auth failure.
+		validTo, err := fetchTokenValidTo(resolved)
 		if err != nil {
 			r.Status.User = checkResult{OK: false, Error: err.Error()}
 			r.Status.Account = skip
@@ -187,10 +194,14 @@ func runStatusChecks(profileFlag string) statusResult {
 			r.Status.Project = &skip
 			return r
 		}
-		r.CurrentUser = currentUser
+		r.TokenValidTo = validTo
 		r.Status.User = checkResult{OK: true}
-		email, _ := currentUserFields(currentUser)
-		resolvedEmail = email
+		// Fetch user details for display (best-effort, not auth-critical).
+		if currentUser, cerr := fetchCurrentUser(resolved); cerr == nil {
+			r.CurrentUser = currentUser
+			email, _ := currentUserFields(currentUser)
+			resolvedEmail = email
+		}
 	}
 
 	// Persist email back to the profile if it is new or changed.
@@ -352,6 +363,12 @@ func printStatus(r statusResult) {
 		}
 	}
 	add(userLabel, sv(r.Status.User, userVal))
+	switch {
+	case r.TokenType == "SSO" && r.RefreshTokenExpiry != 0:
+		add("Expires", formatTokenValidTo(r.RefreshTokenExpiry))
+	case r.TokenType != "SSO" && r.Status.User.OK:
+		add("Expires", formatTokenValidTo(r.TokenValidTo))
+	}
 	add("Account", sv(r.Status.Account, func() string {
 		if r.Status.Account.OK {
 			return fmt.Sprintf("%s (%s)", r.Status.Account.Name, r.AccountID)
@@ -457,26 +474,45 @@ func checkAPIUrl(apiURL string) error {
 }
 
 // validateSATToken calls POST /ng/api/token/validate and returns a display identity
-// string of the form "username (email)" parsed from the response.
-func validateSATToken(a *auth.ResolvedAuth) (identity string, err error) {
+// string of the form "username (email)" parsed from the response, plus the validTo epoch ms.
+func validateSATToken(a *auth.ResolvedAuth) (identity string, validTo int64, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), apiTimeout)
 	defer cancel()
 	result, _, err := hclient.NewWithAuth(ctx, a).PostRaw("/ng/api/token/validate", nil, a.PATToken, "text/plain")
 	if err != nil {
 		if strings.Contains(err.Error(), "401") {
-			return "", fmt.Errorf("token rejected (401)")
+			return "", 0, fmt.Errorf("token rejected (401)")
 		}
 		if strings.Contains(err.Error(), "403") {
-			return "", fmt.Errorf("access denied (403)")
+			return "", 0, fmt.Errorf("access denied (403)")
 		}
-		return "", err
+		return "", 0, err
 	}
 	u := jsonAnyAt(result, "data", "username")
 	e := jsonAnyAt(result, "data", "email")
+	validTo = jsonInt64At(result, "data", "validTo")
 	if u != "" && e != "" {
-		return fmt.Sprintf("%s (%s)", u, e), nil
+		return fmt.Sprintf("%s (%s)", u, e), validTo, nil
 	}
-	return u, nil
+	return u, validTo, nil
+}
+
+// fetchTokenValidTo calls POST /ng/api/token/validate and returns the validTo epoch ms.
+// Returns an error if the token is rejected; 0 validTo means no expiry.
+func fetchTokenValidTo(a *auth.ResolvedAuth) (int64, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), apiTimeout)
+	defer cancel()
+	result, _, err := hclient.NewWithAuth(ctx, a).PostRaw("/ng/api/token/validate", nil, a.PATToken, "text/plain")
+	if err != nil {
+		if strings.Contains(err.Error(), "401") {
+			return 0, fmt.Errorf("token rejected (401)")
+		}
+		if strings.Contains(err.Error(), "403") {
+			return 0, fmt.Errorf("access denied (403)")
+		}
+		return 0, err
+	}
+	return jsonInt64At(result, "data", "validTo"), nil
 }
 
 // fetchTokenEmail returns the email associated with a PAT or SAT token.
@@ -501,7 +537,6 @@ func fetchTokenEmail(apiURL, token, accountID string) string {
 	email, _ := currentUserFields(result)
 	return email
 }
-
 
 func fetchCurrentUser(a *auth.ResolvedAuth) (any, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), apiTimeout)
@@ -542,6 +577,30 @@ func checkResource(a *auth.ResolvedAuth, path string, params map[string]string, 
 	return name, nil
 }
 
+func formatTokenValidTo(validTo int64) string {
+	if validTo == 0 {
+		return "no expiry"
+	}
+	exp := time.UnixMilli(validTo).Local()
+	remaining := time.Until(exp)
+	date := exp.Format("Jan 2, 2006 15:04")
+	if remaining <= 0 {
+		return fmt.Sprintf("%s %s (expired %s ago)", console.RedX(), date, roughDuration(-remaining))
+	}
+	return fmt.Sprintf("%s %s (%s)", console.GreenCheck(), date, roughDuration(remaining))
+}
+
+// roughDuration formats a duration as "Xd Yh", dropping smaller units.
+func roughDuration(d time.Duration) string {
+	d = d.Round(time.Hour)
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	if days > 0 {
+		return fmt.Sprintf("%dd %dh", days, hours)
+	}
+	return fmt.Sprintf("%dh", hours)
+}
+
 func jsonAnyAt(v any, keys ...string) string {
 	for _, k := range keys {
 		m, ok := v.(map[string]any)
@@ -552,4 +611,21 @@ func jsonAnyAt(v any, keys ...string) string {
 	}
 	s, _ := v.(string)
 	return s
+}
+
+func jsonInt64At(v any, keys ...string) int64 {
+	for _, k := range keys {
+		m, ok := v.(map[string]any)
+		if !ok {
+			return 0
+		}
+		v = m[k]
+	}
+	switch n := v.(type) {
+	case float64:
+		return int64(n)
+	case int64:
+		return n
+	}
+	return 0
 }

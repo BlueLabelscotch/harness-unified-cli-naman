@@ -48,6 +48,12 @@ nouns:
       - id: project_id
         label: Project ID
         expr: it["project_id"]
+      - id: auth_type
+        label: Auth Type
+        expr: it["auth_type"]
+      - id: registry_url
+        label: Registry URL
+        expr: it["registry_url"]
 
   - noun: module
     short_desc: A CLI module grouping related nouns and commands.
@@ -182,7 +188,7 @@ commands:
       get_id_expr: "-"
       paging:
         paging_strategy: flat_list
-      columns: [profile, api_url, account_id, org_id, project_id]
+      columns: [profile, auth_type, api_url, account_id, org_id, project_id]
 
   - command: auth status
     verb: auth
