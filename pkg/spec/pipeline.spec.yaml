@@ -195,7 +195,7 @@ nouns:
       - id: status
         expr: it.status
       - id: pipeline
-        expr: 'len(ctx.parentIdParts) > 1 ? ctx.parentIdParts[0] : it.pipelineIdentifier'
+        expr: it.pipelineIdentifier
 
   - noun: freeze_window
     short_desc: A scheduled deployment freeze window that blocks pipeline executions.
@@ -913,6 +913,7 @@ commands:
         description: "Filter by type: HarnessApproval, JiraApproval, CustomApproval, ServiceNowApproval"
     endpoint:
       path: /pipeline/api/v1/orgs/{{auth.org}}/projects/{{auth.project}}/approvals/execution/{{lastPart(ctx.parentId)}}
+      fetch_fn: list_approval_instances_fetch
       items_expr: it
       get_id_expr: it.id
       query_params:
