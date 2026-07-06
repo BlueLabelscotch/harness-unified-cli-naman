@@ -919,7 +919,13 @@ commands:
     noun: approval_instance
     short: List approval instances for a pipeline execution
     id_allow_slash: true
+    id_allow_slash: true
     requires_parentid: true
+    parentid_label: "<[pipeline/]execution>"
+    completion_seq:
+      - completion_noun: pipeline
+      - completion_noun: execution
+        keep_order: true
     parentid_label: "<[pipeline/]execution>"
     completion_seq:
       - completion_noun: pipeline
