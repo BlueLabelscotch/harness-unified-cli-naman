@@ -70,6 +70,7 @@ nouns:
       - id: desc
         label: Description
         expr: it["desc"]
+        width_max: 60
 
   - noun: noun
     short_desc: A CLI noun (resource type) with its supported verbs and module.

@@ -94,6 +94,26 @@ func downloadModuleIfNeeded(moduleName, binaryName, version, platform, installDi
 	return true, nil
 }
 
+func checkRunningFromInstallDir(installDir string) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return nil
+	}
+	exeDir, err1 := filepath.EvalSymlinks(filepath.Dir(exe))
+	absInstall, err2 := filepath.EvalSymlinks(installDir)
+	if err1 != nil || err2 != nil {
+		return nil
+	}
+	if exeDir != absInstall {
+		return fmt.Errorf(
+			"harness is running from %s, not the install directory %s\n"+
+				"Run the installed binary or pass --install-dir to point at %s.",
+			exeDir, absInstall, exeDir,
+		)
+	}
+	return nil
+}
+
 func InstallCLIHandler(ctx *cmdctx.Ctx) error {
 	version := cmdctx.GetString(ctx.FlagValues, "version")
 	force := cmdctx.GetBool(ctx.FlagValues, "force")
@@ -105,6 +125,10 @@ func InstallCLIHandler(ctx *cmdctx.Ctx) error {
 		installDir = installDefaultDir
 	}
 	installDir = hbase.ExpandHomeDir(installDir)
+
+	if err := checkRunningFromInstallDir(installDir); err != nil {
+		return err
+	}
 
 	var err error
 	version, err = resolveVersion(version)
