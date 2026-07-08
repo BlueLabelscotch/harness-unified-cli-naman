@@ -937,7 +937,7 @@ commands:
       path: /pipeline/api/v1/orgs/{{auth.org}}/projects/{{auth.project}}/approvals/execution/{{lastPart(ctx.parentId)}}
       fetch_fn: list_approval_instances_fetch
       items_expr: it
-      get_id_expr: it.id
+      get_id_expr: ctx.parentId + "/" + it.id
       query_params:
         approval_status: flags.status
         approval_type: flags.type
@@ -945,6 +945,18 @@ commands:
       paging:
         paging_strategy: flat_list
       columns: [id, type, status, pipeline, deadline]
+
+  - command: get approval_instance
+    verb: get
+    noun: approval_instance
+    short: Get an approval instance by id
+    id_allow_slash: true
+    id_label: "<[pipeline/]execution/approvalId>"
+    handler_type: endpoint
+    endpoint:
+      path: /pipeline/api/v1/orgs/{{auth.org}}/projects/{{auth.project}}/approvals/execution/{{ctx.idParts[len(ctx.idParts)-2]}}
+      item_expr: find(it, .id == lastPart(ctx.id))
+      fields_subset: [id, type, status, pipeline, deadline, message, min_count, user_groups, auto_reject, created, updated, error]
 
   - command: execute approval_instance:approve
     verb: execute
