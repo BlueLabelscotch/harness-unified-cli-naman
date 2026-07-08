@@ -144,6 +144,7 @@ func SetupAndExecuteRootCmd(root *cobra.Command, reg *registry.Registry) {
 		hlog.SetLogFile(path)
 	}
 	reg.TelemetryEnv = telemetry.NewEnv()
+	defer telemetry.Init()()
 	if reg.IsMainBinary {
 		release.NagIfDue(hbase.Version)
 		release.MaybeSpawn()
@@ -173,14 +174,16 @@ func SetupAndExecuteRootCmd(root *cobra.Command, reg *registry.Registry) {
 	}
 
 	if err := root.Execute(); err != nil {
-		if !isCompletionInvocation() {
-			emitBadUsage(root, reg, err)
-		}
 		// Only suggest an alternative command when cobra itself couldn't dispatch
 		// (i.e. no runnable command was found). If cobra found and ran a command
 		// handler, the error came from the handler — show it as-is.
 		matched, _, _ := root.Find(os.Args[1:])
 		commandResolved := matched != nil && matched != root && matched.Runnable()
+		if !isCompletionInvocation() && !commandResolved {
+			// emitBadUsage only for cobra parse-time failures; registry.emitError
+			// already fires for handler errors.
+			emitBadUsage(root, reg, err)
+		}
 		if !commandResolved {
 			if suggestion := reg.SuggestRootCommand(os.Args[1:]); suggestion != "" {
 				console.PrintError(suggestion)
