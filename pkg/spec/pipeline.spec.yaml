@@ -951,6 +951,7 @@ commands:
       paging:
         paging_strategy: flat_list
       columns: [id, type, status, pipeline, deadline]
+<<<<<<< HEAD
 
   - command: get approval_instance
     verb: get
@@ -1006,6 +1007,8 @@ commands:
       body_params:
         action: '"REJECT"'
         comments: flags.comment
+=======
+>>>>>>> 9454cb4 (extended fields required for approvals)
 
   - command: list freeze_window
     verb: list
