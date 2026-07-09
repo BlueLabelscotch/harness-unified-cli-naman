@@ -760,6 +760,63 @@ commands:
       query_params:
         targetIdentifier: flags.pipeline
 
+  - command: create trigger
+    verb: create
+    noun: trigger
+    short: Create a trigger for a pipeline (-f trigger.yaml)
+    completion_noun: pipeline
+    requires_parentid: true
+    parentid_label: pipeline
+    handler_type: endpoint
+    endpoint:
+      method: POST
+      path: /pipeline/api/triggers
+      file_body: required
+      content_type: application/yaml
+      item_expr: it.data
+      text_header: "\nCreated trigger in pipeline {{ctx.parentId}}\n"
+      query_params:
+        targetIdentifier: ctx.parentId
+
+  - command: update trigger
+    verb: update
+    noun: trigger
+    short: Update a trigger's YAML definition (-f trigger.yaml)
+    completion_noun: trigger
+    handler_type: endpoint
+    flags:
+      - name: pipeline
+        required: true
+        description: Pipeline identifier the trigger belongs to
+    endpoint:
+      method: PUT
+      path: /pipeline/api/triggers/{{ctx.id}}
+      file_body: required
+      content_type: application/yaml
+      no_fields: true
+      text_header: "\nUpdated trigger {{ctx.id}}\n"
+      query_params:
+        targetIdentifier: flags.pipeline
+
+  - command: delete trigger
+    verb: delete
+    noun: trigger
+    confirm_mode: prompt
+    short: Delete a trigger by identifier
+    completion_noun: trigger
+    handler_type: endpoint
+    flags:
+      - name: pipeline
+        required: true
+        description: Pipeline identifier the trigger belongs to
+    endpoint:
+      method: DELETE
+      path: /pipeline/api/triggers/{{ctx.id}}
+      item_expr: it
+      text_header: "\nDeleted trigger {{ctx.id}}\n"
+      query_params:
+        targetIdentifier: flags.pipeline
+
   - command: list input_set
     verb: list
     noun: input_set
