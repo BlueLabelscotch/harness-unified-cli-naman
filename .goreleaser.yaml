@@ -100,7 +100,7 @@ changelog:
 release:
   github:
     owner: harness
-    name: harness-unified-cli
+    name: cli
   draft: false
   prerelease: auto
   header: "Harness Unified CLI {{ .Tag }}"

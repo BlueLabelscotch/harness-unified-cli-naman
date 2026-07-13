@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-REPO="harness/harness-unified-cli"
+REPO="harness/cli"
 INSTALL_DIR="${HARNESS_INSTALL_DIR:-$HOME/.local/bin}"
 USER_OVERRIDE="${HARNESS_INSTALL_DIR:+yes}"
 NONINTERACTIVE="${HARNESS_NONINTERACTIVE:-}"
